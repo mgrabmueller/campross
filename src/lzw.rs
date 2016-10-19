@@ -28,7 +28,6 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, error::Error>
     let mut buf = [0u8; 1];
     
     let mut nread = try!(input.read(&mut buf));
-    let mut byte_pos = 0;
     while nread == 1 {
         let c = buf[0];
 
@@ -41,10 +40,6 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, error::Error>
             }
             let _ = current_string.pop();
             if let Some(entry) = dict.get(&current_string) {
-//                println!("out: {}", entry.code);
-                println!("c: {:3} {:4} {:?} ({})", byte_pos, entry.code,
-                         String::from_utf8_lossy(&current_string),
-                         code_len);
                 try!(out.write_bits(entry.code, code_len));
             } else {
                 unreachable!();
@@ -52,18 +47,15 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, error::Error>
             current_string.truncate(0);
             current_string.push(c);
             if next_code < max_code && next_code >= (1 << code_len) {
-                println!("c: bump code len at {}: new: {}, next_code: {}, code_limit: {}", byte_pos, code_len+1, next_code, 1 << code_len);
                 code_len += 1;
             }
         }
             
-        byte_pos += 1;
         nread = try!(input.read(&mut buf));
     }
     
     if current_string.len() > 0 {
         if let Some(entry) = dict.get(&current_string) {
-//            println!("out: {}", entry.code);
             try!(out.write_bits(entry.code, code_len));
         } else {
             unreachable!();
@@ -91,7 +83,6 @@ pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, error::Error>
 
     let mut inp = BitReader::new(input);
 
-    let mut byte_pos = 0;
     let mut code = try!(inp.read_bits(code_len)) as usize;
     while code != EOF {
         if let None = dict.get(&code) {
@@ -103,8 +94,6 @@ pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, error::Error>
 
         let str_code = dict.get(&code).unwrap().clone();
         let _ = try!(output.write(&str_code[..]));
-        byte_pos += str_code.len();
-        println!("d: {:3} {:4} {:?}", byte_pos, code, String::from_utf8_lossy(&str_code));
         
         if previous_string.len() > 0 && next_code <= max_code {
             let mut ns = Vec::new();
@@ -116,7 +105,6 @@ pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, error::Error>
         previous_string = str_code;
 
         if next_code < max_code && next_code + 1 >= (1 << code_len) {
-            println!("d: bump code len at {}: new: {}, next_code: {}, code_limit: {}", byte_pos, code_len+1, next_code, 1 << code_len);
             code_len += 1;
         }
         code = try!(inp.read_bits(code_len)) as usize;
