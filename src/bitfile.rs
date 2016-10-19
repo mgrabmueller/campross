@@ -2,7 +2,6 @@
 
 use std::io::Read;
 use std::io::Write;
-use std::io;
 
 use error::Error;
 
@@ -90,7 +89,7 @@ impl<W: Write> BitWriter<W> {
     }
 
     /// Write a bit to the underlying `Write` instance.
-    pub fn write_bit(&mut self, bit: bool) -> io::Result<()> {
+    pub fn write_bit(&mut self, bit: bool) -> Result<(), Error> {
         if bit {
             self.buf |= self.mask;
         }
@@ -105,7 +104,7 @@ impl<W: Write> BitWriter<W> {
 
     /// Write the `count` least significant bits from `value`.  Note
     /// that the maximum number of bits to write in one call is 64.
-    pub fn write_bits(&mut self, value: usize, mut count: usize) -> io::Result<()> {
+    pub fn write_bits(&mut self, value: usize, mut count: usize) -> Result<(), Error> {
         while count > 0 {
             try!(self.write_bit((value & (1 << (count - 1))) != 0));
             count -= 1;
@@ -115,7 +114,7 @@ impl<W: Write> BitWriter<W> {
 
     /// Flush any unwritten bits to the underlying `Write` instance
     /// and return it.
-    pub fn flush(mut self) -> io::Result<W> {
+    pub fn flush(mut self) -> Result<W, Error> {
         if self.mask != 0x80 {
             try!(self.inner.write(&[self.buf]));
         }

@@ -2,7 +2,6 @@
 //!
 //! Implementation based on http://marknelson.us/2014/10/19/data-compression-with-arithmetic-coding/
 
-use std::io;
 use std::io::{Read, Write};
 
 use bitfile::{BitReader, BitWriter};
@@ -156,7 +155,7 @@ impl Encoder {
         self.state.debug_print();
     }
     
-    fn output_bit_plus_pending<W: Write>(&mut self, bit: usize, pending_bits: &mut usize, bw: &mut BitWriter<W>) -> io::Result<()> {
+    fn output_bit_plus_pending<W: Write>(&mut self, bit: usize, pending_bits: &mut usize, bw: &mut BitWriter<W>) -> Result<(), Error> {
         try!(bw.write_bit(bit != 0));
         while *pending_bits > 0 {
             try!(bw.write_bit(bit == 0));
@@ -167,7 +166,7 @@ impl Encoder {
 
     /// Compress all the data from reader `input` and write the
     /// compressed data to the writer `output`.
-    pub fn compress<R, W>(mut self, mut input: R, output: W) -> io::Result<W>
+    pub fn compress<R, W>(mut self, mut input: R, output: W) -> Result<W, Error>
         where R: Read,
               W: Write {
 

@@ -5,6 +5,7 @@ pub mod error;
 //pub mod huff;
 pub mod bitfile;
 pub mod arith;
+pub mod lzw;
 
 use error::Error;
 
