@@ -475,7 +475,6 @@ mod test {
         enc.preload(&counts);
         let compressed = enc.compress(c, vec![]).unwrap();
 
-        println!("before: {}, after: {}, ratio: {}", input.len(), compressed.len(), compressed.len() as f32 / input.len() as f32);
         let expected = [77, 112, 63, 170, 109, 243, 149, 47, 92, 146, 19, 121,
                         134, 77, 28, 86, 255, 177, 88, 240, 33, 30, 78, 175,
                         172, 218, 16, 109, 0, 191, 105, 183, 38, 185, 17, 45,
