@@ -4,6 +4,7 @@ use std::collections::HashMap;
 pub mod error;
 //pub mod huff;
 pub mod bitfile;
+pub mod arith;
 
 use error::Error;
 

@@ -4,10 +4,13 @@ use std::io::Read;
 use std::io::Write;
 use std::io;
 
+use error::Error;
+
 pub struct BitReader<R> {
     inner: R,
     buf: u8,
     mask: u8,
+    extra_bits: usize,
 }
 
 impl<R: Read> BitReader<R> {
@@ -17,16 +20,31 @@ impl<R: Read> BitReader<R> {
             inner: inner,
             buf: 0,
             mask: 0x80,
+            extra_bits: 0,
+        }
+    }
+
+    pub fn new_with_extra(inner: R, extra: usize) -> BitReader<R> {
+        BitReader{
+            inner: inner,
+            buf: 0,
+            mask: 0x80,
+            extra_bits: extra,
         }
     }
 
     /// Read the next bit.
-    pub fn read_bit(&mut self) -> io::Result<bool> {
+    pub fn read_bit(&mut self) -> Result<bool, Error> {
         if self.mask == 0x80 {
             let mut b = [0u8; 1];
             let nread = try!(self.inner.read(&mut b[..]));
             if nread == 0 {
-                return Ok(false);
+                if self.extra_bits > 0 {
+                    self.extra_bits -= 1;
+                    return Ok(false);
+                } else {
+                    return Err(Error::UnexpectedEof);
+                }
             }
             self.buf = b[0];
         }
@@ -41,7 +59,7 @@ impl<R: Read> BitReader<R> {
     /// Read the next `count` bits, as the least significant bits of
     /// the returned 64-bit value.  Note that the maximum number of
     /// bits to read in one call is 64.
-    pub fn read_bits(&mut self, mut count: usize) -> io::Result<u64> {
+    pub fn read_bits(&mut self, mut count: usize) -> Result<u64, Error> {
         let mut result = 0;
         while count > 0 {
             let b = try!(self.read_bit());
