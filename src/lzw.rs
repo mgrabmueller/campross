@@ -1,25 +1,26 @@
+// Copyright 2016 Martin Grabmueller. See the LICENSE file at the
+// top-level directory of this distribution for license information.
+
+//! Simple implementation of an LZW compressor.
+
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use error;
+use error::Error;
 use bitfile::{BitWriter, BitReader};
 
-const EOF: usize = 256;
+const EOF: u64 = 256;
 
-struct Entry {
-    code: usize,
-}
-
-pub fn compress<R, W>(mut input: R, output: W) -> Result<W, error::Error>
+pub fn compress<R, W>(mut input: R, output: W) -> Result<W, Error>
     where R: Read, W: Write {
     let max_code_len = 16;
     let max_code = (1 << max_code_len) - 1;
     let mut code_len = 9;
     let mut next_code = 257;
-    let mut dict: HashMap<Vec<u8>, Entry> = HashMap::new();
+    let mut dict: HashMap<Vec<u8>, u64> = HashMap::new();
     for c in 0..256 {
         let mut s = Vec::new();
         s.push(c as u8);
-        dict.insert(s, Entry{code: c});
+        dict.insert(s, c as u64);
     }
 
     let mut current_string: Vec<u8> = Vec::new();
@@ -34,13 +35,12 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, error::Error>
         current_string.push(c);
         if let None = dict.get(&current_string) {
             if next_code <= max_code {
-                dict.insert(current_string.clone(),
-                            Entry{code: next_code});
+                dict.insert(current_string.clone(), next_code);
                 next_code += 1;
             }
             let _ = current_string.pop();
-            if let Some(entry) = dict.get(&current_string) {
-                try!(out.write_bits(entry.code, code_len));
+            if let Some(code) = dict.get(&current_string) {
+                try!(out.write_bits(*code, code_len));
             } else {
                 unreachable!();
             }
@@ -55,8 +55,8 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, error::Error>
     }
     
     if current_string.len() > 0 {
-        if let Some(entry) = dict.get(&current_string) {
-            try!(out.write_bits(entry.code, code_len));
+        if let Some(code) = dict.get(&current_string) {
+            try!(out.write_bits(*code, code_len));
         } else {
             unreachable!();
         }
@@ -66,13 +66,13 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, error::Error>
     out.flush()
 }
 
-pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, error::Error>
+pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, Error>
     where R: Read, W: Write {
     let max_code_len = 16;
     let max_code = (1 << max_code_len) - 1;
     let mut code_len = 9;
     let mut next_code = 257;
-    let mut dict: HashMap<usize, Vec<u8>> = HashMap::new();
+    let mut dict: HashMap<u64, Vec<u8>> = HashMap::new();
     for c in 0..256 {
         let mut s = Vec::new();
         s.push(c as u8);
@@ -83,7 +83,7 @@ pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, error::Error>
 
     let mut inp = BitReader::new(input);
 
-    let mut code = try!(inp.read_bits(code_len)) as usize;
+    let mut code = try!(inp.read_bits(code_len));
     while code != EOF {
         if let None = dict.get(&code) {
             let mut s = Vec::new();
@@ -107,7 +107,7 @@ pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, error::Error>
         if next_code < max_code && next_code + 1 >= (1 << code_len) {
             code_len += 1;
         }
-        code = try!(inp.read_bits(code_len)) as usize;
+        code = try!(inp.read_bits(code_len));
 
     }
     

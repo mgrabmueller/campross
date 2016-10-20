@@ -104,7 +104,7 @@ impl<W: Write> BitWriter<W> {
 
     /// Write the `count` least significant bits from `value`.  Note
     /// that the maximum number of bits to write in one call is 64.
-    pub fn write_bits(&mut self, value: usize, mut count: usize) -> Result<(), Error> {
+    pub fn write_bits(&mut self, value: u64, mut count: usize) -> Result<(), Error> {
         while count > 0 {
             try!(self.write_bit((value & (1 << (count - 1))) != 0));
             count -= 1;

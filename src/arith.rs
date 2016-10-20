@@ -1,3 +1,6 @@
+// Copyright 2016 Martin Grabmueller. See the LICENSE file at the
+// top-level directory of this distribution for license information.
+
 //! Simple implementation of an arithmetic coder.
 //!
 //! Implementation based on http://marknelson.us/2014/10/19/data-compression-with-arithmetic-coding/
@@ -327,11 +330,28 @@ impl Decoder {
     }
 }
 
+/// Encode all data from `input` using arithmetic compression and
+/// write the compressed stream to `output`.  On success, the output
+/// is returned.
+pub fn compress<R: Read, W: Write>(input: R, output: W) -> Result<W, Error> {
+    let enc = Encoder::new();
+    enc.compress(input, output)
+}
+
+/// Decode all data from `input` using arithmetic compression and
+/// write the decompressed stream to `output`.  On success, the output
+/// is returned.
+pub fn decompress<R: Read, W: Write>(input: R, output: W) -> Result<W, Error> {
+    let dec = Decoder::new();
+    dec.decompress(input, output)
+}
+
 
 #[cfg(test)]
 mod test {
-    use super::{State, Encoder, Decoder};
-    use super::Prob;
+    use ::std::collections::HashMap;
+    use ::std::io::Cursor;
+    use super::{State, Prob, compress, decompress, Encoder, Decoder};
 
     #[test]
     fn get_prob() {
@@ -366,12 +386,10 @@ mod test {
     }
 
     #[test]
-    fn compress() {
-        use ::std::io::Cursor;
+    fn compress0() {
         let input = b"The banana goat in the banana boat can hand bananas to the banana man.";
         let c = Cursor::new(&input[..]);
-        let enc = Encoder::new();
-        let compressed = enc.compress(c, vec![]).unwrap();
+        let compressed = compress(c, vec![]).unwrap();
 
         let expected = [84, 20, 127, 73, 221, 155, 247, 51, 8, 76, 67, 84, 214,
                         189, 168, 202, 126, 193, 88, 87, 234, 14, 7, 135, 177,
@@ -384,11 +402,9 @@ mod test {
 
     #[test]
     fn compress_short() {
-        use ::std::io::Cursor;
         let input = b"A";
         let c = Cursor::new(&input[..]);
-        let enc = Encoder::new();
-        let compressed = enc.compress(c, vec![]).unwrap();
+        let compressed = compress(c, vec![]).unwrap();
 
         let expected = [65, 189, 128];
 
@@ -397,11 +413,9 @@ mod test {
 
     #[test]
     fn compress_empty() {
-        use ::std::io::Cursor;
         let input = b"";
         let c = Cursor::new(&input[..]);
-        let enc = Encoder::new();
-        let compressed = enc.compress(c, vec![]).unwrap();
+        let compressed = compress(c, vec![]).unwrap();
 
         let expected = [255, 64];
 
@@ -409,8 +423,7 @@ mod test {
     }
 
     #[test]
-    fn decompress() {
-        use ::std::io::Cursor;
+    fn decompress0() {
         let input = [84, 20, 127, 73, 221, 155, 247, 51, 8, 76, 67, 84, 214,
                      189, 168, 202, 126, 193, 88, 87, 234, 14, 7, 135, 177,
                      86, 184, 223, 223, 100, 13, 248, 114, 125, 96, 36, 120,
@@ -418,41 +431,32 @@ mod test {
                      220, 172, 147, 235, 59, 193, 128];
         let expected = b"The banana goat in the banana boat can hand bananas to the banana man.";
 
-        let c = Cursor::new(&input[..]);
-        let dec = Decoder::new();
-        let decompressed = dec.decompress(c, vec![]).unwrap();
+        let decompressed = decompress(Cursor::new(&input[..]), vec![]).unwrap();
 
         assert_eq!(&expected[..], &decompressed[..]);
     }
 
     #[test]
     fn decompress_short() {
-        use ::std::io::Cursor;
         let input = [65, 189, 128];
         let expected = b"A";
 
-        let c = Cursor::new(&input[..]);
-        let dec = Decoder::new();
-        let decompressed = dec.decompress(c, vec![]).unwrap();
+        let decompressed = decompress(Cursor::new(&input[..]), vec![]).unwrap();
 
         assert_eq!(&expected[..], &decompressed[..]);
     }
 
     #[test]
     fn decompress_empty() {
-        use ::std::io::Cursor;
         let input = [255, 64];
         let expected = b"";
 
-        let c = Cursor::new(&input[..]);
-        let dec = Decoder::new();
-        let decompressed = dec.decompress(c, vec![]).unwrap();
+        let decompressed = decompress(Cursor::new(&input[..]), vec![]).unwrap();
 
         assert_eq!(&expected[..], &decompressed[..]);
     }
 
     fn calc_counts(bytes: &[u8]) -> Vec<(u8, u64)> {
-        use ::std::collections::HashMap;
         let mut hm: HashMap<u8, u64> = HashMap::new();
         for b in bytes {
             *hm.entry(*b).or_insert(0) += 1;
@@ -466,13 +470,12 @@ mod test {
     
     #[test]
     fn compress_preloaded() {
-        use ::std::io::Cursor;
         let input = b"The banana goat in the banana boat can hand bananas to the banana man.";
         let counts = calc_counts(input);
-        let c = Cursor::new(&input[..]);
+
         let mut enc = Encoder::new();
         enc.preload(&counts);
-        let compressed = enc.compress(c, vec![]).unwrap();
+        let compressed = enc.compress(Cursor::new(&input[..]), vec![]).unwrap();
 
         let expected = [77, 112, 63, 170, 109, 243, 149, 47, 92, 146, 19, 121,
                         134, 77, 28, 86, 255, 177, 88, 240, 33, 30, 78, 175,
@@ -484,7 +487,6 @@ mod test {
 
     #[test]
     fn decompress_preloaded() {
-        use ::std::io::Cursor;
         let input = [77, 112, 63, 170, 109, 243, 149, 47, 92, 146, 19, 121,
                      134, 77, 28, 86, 255, 177, 88, 240, 33, 30, 78, 175,
                      172, 218, 16, 109, 0, 191, 105, 183, 38, 185, 17, 45,
@@ -502,17 +504,14 @@ mod test {
 
     #[test]
     fn compress_decompress() {
-        use ::std::io::Cursor;
         let f = include_bytes!("arith.rs");
         let original = &f[..];
         
         let c = Cursor::new(&original[..]);
-        let enc = Encoder::new();
-        let compressed = enc.compress(c, vec![]).unwrap();
+        let compressed = compress(c, vec![]).unwrap();
         
         let c = Cursor::new(&compressed[..]);
-        let dec = Decoder::new();
-        let decompressed = dec.decompress(c, vec![]).unwrap();
+        let decompressed = decompress(c, vec![]).unwrap();
         assert_eq!(&original[..], &decompressed[..]);
     }
 }
