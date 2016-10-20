@@ -10,6 +10,31 @@ use bitfile::{BitWriter, BitReader};
 
 const EOF: u64 = 256;
 
+struct State {
+    max_code: u64,
+    code_len: usize,
+    next_code: u64,
+    dict: HashMap<u64, Vec<u8>>,
+}
+
+impl State {
+    fn new() -> State {
+        let max_code_len = 16;
+        let mut st = State {
+            max_code: (1 << max_code_len) - 1,
+            code_len: 9,
+            next_code: 257,
+            dict: HashMap::new(),
+        };
+        for c in 0..256 {
+            let mut s = Vec::new();
+            s.push(c as u8);
+            st.dict.insert(c, s);
+        }
+        st
+    }
+}
+
 pub fn compress<R, W>(mut input: R, output: W) -> Result<W, Error>
     where R: Read, W: Write {
     let max_code_len = 16;
@@ -112,6 +137,51 @@ pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, Error>
     }
     
     Ok(output)
+}
+
+pub fn inspect<R>(input: R) -> Result<(), Error>
+    where R: Read {
+
+    let mut state = State::new();
+    
+    let mut previous_string: Vec<u8> = Vec::new();
+
+    let mut inp = BitReader::new(input);
+
+    let mut code = try!(inp.read_bits(state.code_len));
+    while code != EOF {
+        if let None = state.dict.get(&code) {
+            let mut s = Vec::new();
+            s.extend_from_slice(&previous_string[..]);
+            s.extend_from_slice(&previous_string[0..1]);
+            state.dict.insert(code, s);
+        }
+
+        let str_code = state.dict.get(&code).unwrap().clone();
+        let as_string =
+            match String::from_utf8(str_code.clone()) {
+                Ok(s) => s,
+                Err(_) => "<binary>".to_string(),
+            };
+        println!("{:4} {:?}", code, as_string);
+        
+        if previous_string.len() > 0 && state.next_code <= state.max_code {
+            let mut ns = Vec::new();
+            ns.extend_from_slice(&previous_string[..]);
+            ns.extend_from_slice(&str_code[0..1]);
+            state.dict.insert(state.next_code, ns);
+            state.next_code += 1;
+        }
+        previous_string = str_code;
+
+        if state.next_code < state.max_code && state.next_code + 1 >= (1 << state.code_len) {
+            state.code_len += 1;
+        }
+        code = try!(inp.read_bits(state.code_len));
+
+    }
+    
+    Ok(())
 }
 
 #[cfg(test)]

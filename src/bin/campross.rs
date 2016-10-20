@@ -10,23 +10,34 @@ use std::env;
 use campross::arith;
 use campross::lzw;
 use campross::lzmg1;
+use campross::huff;
 
-fn do_compress(input: &str, output: &str, mode: Mode, stats: bool) {
+enum Method {
+    Arith,
+    Lzw,
+    Lzmg1,
+    Huff,
+}
+
+fn do_compress(input: &str, output: &str, method: Method, stats: bool) {
     {
         let inf = File::open(input).unwrap();
         let outf = File::create(output).unwrap();
 
-        let mut out = match mode {
-            Mode::Arith => {
+        let mut out = match method {
+            Method::Arith => {
                 let enc = arith::Encoder::new();
                 enc.compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
             },
-            Mode::Lzw => {
+            Method::Lzw => {
                 lzw::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
             },
-            Mode::Lzmg1 => {
+            Method::Lzmg1 => {
                 lzmg1::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
-            }
+            },
+            Method::Huff => {
+                huff::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+            },
         };
         out.flush().unwrap();
     }
@@ -42,35 +53,51 @@ fn do_compress(input: &str, output: &str, mode: Mode, stats: bool) {
     }
 }
 
-fn do_decompress(input: &str, output: &str, mode: Mode, _stats: bool) {
+fn do_decompress(input: &str, output: &str, method: Method, _stats: bool) {
     let inf = File::open(input).unwrap();
     let outf = File::create(output).unwrap();
 
-    let mut out = match mode {
-        Mode::Arith => {
+    let mut out = match method {
+        Method::Arith => {
             let enc = arith::Decoder::new();
             enc.decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
-        Mode::Lzw => {
+        Method::Lzw => {
             lzw::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
-        Mode::Lzmg1 => {
+        Method::Lzmg1 => {
             lzmg1::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
-        }
+        },
+        Method::Huff => {
+            huff::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+        },
     };
     out.flush().unwrap();
+}
+
+fn do_inspect(input: &str, method: Method) {
+    let inf = File::open(input).unwrap();
+
+    match method {
+        Method::Arith => {
+            println!("inspect mode not supported for arithmetic encoder");
+        },
+        Method::Lzw => {
+            lzw::inspect(BufReader::new(inf)).unwrap();
+        },
+        Method::Lzmg1 => {
+            println!("inspect mode not supported for LZMG1 encoder");
+        },
+        Method::Huff => {
+            println!("inspect mode not supported for Huffman encoder");
+        },
+    }
 }
 
 /// Print a usage summary to stdout that describes the command syntax.
 fn print_usage(program: &str, opts: &Options) {
     let brief = format!("Usage: {} FILE", program);
     print!("{}", opts.usage(&brief));
-}
-
-enum Mode {
-    Arith,
-    Lzw,
-    Lzmg1,
 }
 
 pub fn main() {
@@ -82,6 +109,7 @@ pub fn main() {
     opts.optopt("o", "output", "set output file", "FILE");
     opts.optflag("c", "compress", "compress the input file");
     opts.optflag("d", "decompress", "decompress the input file");
+    opts.optflag("x", "examine", "examine a compressed file");
     opts.optopt("m", "method", "select compression method", "arith|lzw|lzmg1");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
@@ -91,21 +119,36 @@ pub fn main() {
             if matches.opt_present("h") {
                 print_usage(&program, &opts);
             }
+            let method =
+                if let Some(s) = matches.opt_str("m") {
+                    match &s[..] {
+                        "arith" => Some(Method::Arith),
+                        "lzw"   => Some(Method::Lzw),
+                        "lzmg1"  => Some(Method::Lzmg1),
+                        "huff"  => Some(Method::Huff),
+                        _       => None,
+                    }
+                } else {
+                    Some(Method::Arith)
+                };
+            if matches.opt_present("x") {
+                if let Some(m) = method {
+                    match matches.opt_str("i") {
+                        Some(input) => {
+                            do_inspect(&input, m);
+                        },
+                        None => {
+                            print_usage(&program, &opts);
+                        }
+                    }
+                } else {
+                    print_usage(&program, &opts);
+                }
+            } else {
             match (matches.opt_str("i"), matches.opt_str("o")) {
                 (Some(input), Some(output)) => {
-                    let mode =
-                        if let Some(s) = matches.opt_str("m") {
-                            match &s[..] {
-                                "arith" => Some(Mode::Arith),
-                                "lzw"   => Some(Mode::Lzw),
-                                "lzmg1"  => Some(Mode::Lzmg1),
-                                _       => None,
-                            }
-                        } else {
-                            Some(Mode::Arith)
-                        };
                     let stats = matches.opt_present("s");
-                    match (mode, matches.opt_present("c"), matches.opt_present("d")) {
+                    match (method, matches.opt_present("c"), matches.opt_present("d")) {
                         (Some(m), true, false) => {
                             do_compress(&input, &output, m, stats);
                         },
@@ -119,6 +162,7 @@ pub fn main() {
                 },
                 _ =>
                     print_usage(&program, &opts),
+            }
             }
         },
         Err(e) => {

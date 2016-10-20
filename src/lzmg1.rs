@@ -85,6 +85,7 @@ impl<R: Read, W: Write> Compressor<R, W> {
                 let mut max_pos = *hpos;
                 let mut max_len = 4;
                 let mut pos = max_pos;
+                let mut iterations = 0;
                 loop {
                     let mut len = 0;
                     for i in 0..look_ahead_bytes {
@@ -102,6 +103,10 @@ impl<R: Read, W: Write> Compressor<R, W> {
                         pos = npos;
                         self.lin_lookups += 1;
                     } else {
+                        break;
+                    }
+                    iterations += 1;
+                    if iterations > 20 {
                         break;
                     }
                 }

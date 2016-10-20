@@ -6,6 +6,7 @@ pub mod bitfile;
 pub mod arith;
 pub mod lzw;
 pub mod lzmg1;
+pub mod huff;
 
 
 
