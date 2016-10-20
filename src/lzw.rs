@@ -10,20 +10,49 @@ use bitfile::{BitWriter, BitReader};
 
 const EOF: u64 = 256;
 
-struct State {
+struct SharedState {
     max_code: u64,
     code_len: usize,
     next_code: u64,
-    dict: HashMap<u64, Vec<u8>>,
 }
 
-impl State {
-    fn new() -> State {
+impl SharedState {
+    fn new() -> SharedState {
         let max_code_len = 16;
-        let mut st = State {
+        let st = SharedState {
             max_code: (1 << max_code_len) - 1,
             code_len: 9,
             next_code: 257,
+        };
+        st
+    }
+}
+
+struct CompressState {
+    dict: HashMap<Vec<u8>, u64>,
+}
+
+impl CompressState {
+    fn new() -> CompressState {
+        let mut st = CompressState {
+            dict: HashMap::new(),
+        };
+        for c in 0..256 {
+            let mut s = Vec::new();
+            s.push(c as u8);
+            st.dict.insert(s, c);
+        }
+        st
+    }
+}
+
+struct DecompressState {
+    dict: HashMap<u64, Vec<u8>>,
+}
+
+impl DecompressState {
+    fn new() -> DecompressState {
+        let mut st = DecompressState {
             dict: HashMap::new(),
         };
         for c in 0..256 {
@@ -37,17 +66,9 @@ impl State {
 
 pub fn compress<R, W>(mut input: R, output: W) -> Result<W, Error>
     where R: Read, W: Write {
-    let max_code_len = 16;
-    let max_code = (1 << max_code_len) - 1;
-    let mut code_len = 9;
-    let mut next_code = 257;
-    let mut dict: HashMap<Vec<u8>, u64> = HashMap::new();
-    for c in 0..256 {
-        let mut s = Vec::new();
-        s.push(c as u8);
-        dict.insert(s, c as u64);
-    }
-
+    let mut state = SharedState::new();
+    let mut cstate = CompressState::new();
+    
     let mut current_string: Vec<u8> = Vec::new();
 
     let mut out = BitWriter::new(output);
@@ -58,21 +79,21 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, Error>
         let c = buf[0];
 
         current_string.push(c);
-        if let None = dict.get(&current_string) {
-            if next_code <= max_code {
-                dict.insert(current_string.clone(), next_code);
-                next_code += 1;
+        if let None = cstate.dict.get(&current_string) {
+            if state.next_code <= state.max_code {
+                cstate.dict.insert(current_string.clone(), state.next_code);
+                state.next_code += 1;
             }
             let _ = current_string.pop();
-            if let Some(code) = dict.get(&current_string) {
-                try!(out.write_bits(*code, code_len));
+            if let Some(code) = cstate.dict.get(&current_string) {
+                try!(out.write_bits(*code, state.code_len));
             } else {
                 unreachable!();
             }
             current_string.truncate(0);
             current_string.push(c);
-            if next_code < max_code && next_code >= (1 << code_len) {
-                code_len += 1;
+            if state.next_code < state.max_code && state.next_code >= (1 << state.code_len) {
+                state.code_len += 1;
             }
         }
             
@@ -80,59 +101,62 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, Error>
     }
     
     if current_string.len() > 0 {
-        if let Some(code) = dict.get(&current_string) {
-            try!(out.write_bits(*code, code_len));
+        if let Some(code) = cstate.dict.get(&current_string) {
+            try!(out.write_bits(*code, state.code_len));
         } else {
             unreachable!();
         }
     }
 
-    try!(out.write_bits(EOF, code_len));
+    try!(out.write_bits(EOF, state.code_len));
     out.flush()
 }
 
 pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, Error>
     where R: Read, W: Write {
-    let max_code_len = 16;
-    let max_code = (1 << max_code_len) - 1;
-    let mut code_len = 9;
-    let mut next_code = 257;
-    let mut dict: HashMap<u64, Vec<u8>> = HashMap::new();
-    for c in 0..256 {
-        let mut s = Vec::new();
-        s.push(c as u8);
-        dict.insert(c, s);
-    }
+    let mut state = SharedState::new();
+    let mut dstate = DecompressState::new();
+    
+    // let max_code_len = 16;
+    // let max_code = (1 << max_code_len) - 1;
+    // let mut code_len = 9;
+    // let mut next_code = 257;
+    // let mut dict: HashMap<u64, Vec<u8>> = HashMap::new();
+    // for c in 0..256 {
+    //     let mut s = Vec::new();
+    //     s.push(c as u8);
+    //     dict.insert(c, s);
+    // }
 
     let mut previous_string: Vec<u8> = Vec::new();
 
     let mut inp = BitReader::new(input);
 
-    let mut code = try!(inp.read_bits(code_len));
+    let mut code = try!(inp.read_bits(state.code_len));
     while code != EOF {
-        if let None = dict.get(&code) {
+        if let None = dstate.dict.get(&code) {
             let mut s = Vec::new();
             s.extend_from_slice(&previous_string[..]);
             s.extend_from_slice(&previous_string[0..1]);
-            dict.insert(code, s);
+            dstate.dict.insert(code, s);
         }
 
-        let str_code = dict.get(&code).unwrap().clone();
+        let str_code = dstate.dict.get(&code).unwrap().clone();
         let _ = try!(output.write(&str_code[..]));
         
-        if previous_string.len() > 0 && next_code <= max_code {
+        if previous_string.len() > 0 && state.next_code <= state.max_code {
             let mut ns = Vec::new();
             ns.extend_from_slice(&previous_string[..]);
             ns.extend_from_slice(&str_code[0..1]);
-            dict.insert(next_code, ns);
-            next_code += 1;
+            dstate.dict.insert(state.next_code, ns);
+            state.next_code += 1;
         }
         previous_string = str_code;
 
-        if next_code < max_code && next_code + 1 >= (1 << code_len) {
-            code_len += 1;
+        if state.next_code < state.max_code && state.next_code + 1 >= (1 << state.code_len) {
+            state.code_len += 1;
         }
-        code = try!(inp.read_bits(code_len));
+        code = try!(inp.read_bits(state.code_len));
 
     }
     
@@ -142,7 +166,8 @@ pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, Error>
 pub fn inspect<R>(input: R) -> Result<(), Error>
     where R: Read {
 
-    let mut state = State::new();
+    let mut state = SharedState::new();
+    let mut dstate = DecompressState::new();
     
     let mut previous_string: Vec<u8> = Vec::new();
 
@@ -150,14 +175,14 @@ pub fn inspect<R>(input: R) -> Result<(), Error>
 
     let mut code = try!(inp.read_bits(state.code_len));
     while code != EOF {
-        if let None = state.dict.get(&code) {
+        if let None = dstate.dict.get(&code) {
             let mut s = Vec::new();
             s.extend_from_slice(&previous_string[..]);
             s.extend_from_slice(&previous_string[0..1]);
-            state.dict.insert(code, s);
+            dstate.dict.insert(code, s);
         }
 
-        let str_code = state.dict.get(&code).unwrap().clone();
+        let str_code = dstate.dict.get(&code).unwrap().clone();
         let as_string =
             match String::from_utf8(str_code.clone()) {
                 Ok(s) => s,
@@ -169,7 +194,7 @@ pub fn inspect<R>(input: R) -> Result<(), Error>
             let mut ns = Vec::new();
             ns.extend_from_slice(&previous_string[..]);
             ns.extend_from_slice(&str_code[0..1]);
-            state.dict.insert(state.next_code, ns);
+            dstate.dict.insert(state.next_code, ns);
             state.next_code += 1;
         }
         previous_string = str_code;
