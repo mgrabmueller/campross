@@ -3,15 +3,17 @@
 
 //! Simple implementation of a Huffman encoder.
 
-use std::io::{Read, Write, copy};
+use std::io::{Read, Write};
 use error::Error;
 use bitfile::{BitWriter, BitReader};
 
-const ALPHABET_SIZE: usize = 257;
 
-const MAX_FREQ: u32 = 1 << 15;
+const MAX_FREQ: u32 = (1 << 16) - 1;
 
-const EOF: Symbol = 256;
+const EOB: Symbol = 256;
+const EOF: Symbol = 257;
+
+const ALPHABET_SIZE: usize = (EOF as usize) + 1;
 
 const BLOCK_SIZE: usize = 1 << 15;
 
@@ -40,10 +42,19 @@ impl State {
             freqs: [0; ALPHABET_SIZE],
             nodes: Vec::new(),
         };
+        s.freqs[EOB as usize] = 1;
         s.freqs[EOF as usize] = 1;
         s
     }
 
+    fn reset(&mut self) {
+        for i in self.freqs.iter_mut() {
+            *i = 0;
+        }
+        self.freqs[EOB as usize] = 1;
+        self.freqs[EOF as usize] = 1;
+    }
+    
     fn update(&mut self, sym: Symbol) {
         let idx = sym as usize;
         self.freqs[idx] += 1;
@@ -89,13 +100,12 @@ impl State {
             let ref n0 = self.nodes[0];
             self.build_c(0, 0, &n0, codes);
         }
-        println!("Codes:");
-
-        for (i, &(c, clen)) in codes.iter().enumerate() {
-            if clen > 0 {
-                println!("{:3} [{:4}] {:20b} ({})", i, self.freqs[i as usize], c, clen);
-            }
-        }
+        // println!("{} codes: ", codes.len());
+        // for (i, &(c, clen)) in codes.iter().enumerate() {
+        //     if clen > 0 {
+        //         println!("{:3} [{:4}] {:20b} ({})", i, self.freqs[i as usize], c, clen);
+        //     }
+        // }
     }
 }
 
@@ -106,44 +116,50 @@ pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> 
 
     let mut outp = BitWriter::new(output);
 
-    let mut block_size = try!(input.read(&mut block[..]));
-
-    // Count character frequencies.
-    for i in 0..block_size {
-        state.update(block[i] as Symbol);
-    }
-    // Build Huffman tree and generate prefix codes.
+    // Build initial Huffman tree and generate prefix codes. This is only used for empty files.
     state.build_tree();
     state.build_codes(&mut codes);
 
-    // Write symbol frequencies to output stream.
-    let mut code_cnt = 0;
-    for i in 0..ALPHABET_SIZE {
-        if state.freqs[i as usize] > 0 {
-            code_cnt += 1;
-        }
-    }
-    try!(outp.write_bits(code_cnt as u64, 9));
-    for i in 0..ALPHABET_SIZE {
-        if state.freqs[i as usize] > 0 {
-            try!(outp.write_bits(i as u64, 9));
-            try!(outp.write_bits(state.freqs[i as usize] as u64, 32));
-        }
-    }
-
-    // Encode first block of data.
-    for i in 0..block_size {
-        let (c, clen) = codes[block[i] as usize];
-        try!(outp.write_bits(c, clen));
-    }
-
-    // Encode following blocks of data. Note that we re-use the
-    // character frequencies from the first block, which is probably
-    // not the best idea - but it is simple and good enough for now.
-    block_size = try!(input.read(&mut block[..]));
+    // Read the first block of data.
+    let mut block_size = try!(input.read(&mut block[..]));
     while block_size > 0 {
+        // Reset state in order to clear out the symbol statistics
+        // from the start/previous block.
+        state.reset();
+        
+        // Count character frequencies.
+        for i in 0..block_size {
+            state.update(block[i] as Symbol);
+        }
+        // Build Huffman tree and generate prefix codes.
+        state.build_tree();
+        state.build_codes(&mut codes);
+
+        // Write symbol frequencies to output stream.
+        let mut code_cnt = 0;
+        for i in 0..ALPHABET_SIZE {
+            if state.freqs[i as usize] > 0 {
+                code_cnt += 1;
+            }
+        }
+        try!(outp.write_bits(code_cnt as u64, 9));
+        for i in 0..ALPHABET_SIZE {
+            if state.freqs[i as usize] > 0 {
+                try!(outp.write_bits(i as u64, 9));
+                try!(outp.write_bits(state.freqs[i as usize] as u64, 16));
+            }
+        }
+
+        // Finally, encode the block's data.
         for i in 0..block_size {
             let (c, clen) = codes[block[i] as usize];
+            try!(outp.write_bits(c, clen));
+        }
+
+        // Read the next block's data.
+        block_size = try!(input.read(&mut block[..]));
+        if block_size > 0 {
+            let (c, clen) = codes[EOB as usize];
             try!(outp.write_bits(c, clen));
         }
     }
@@ -160,38 +176,55 @@ pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error
 
     let mut state = State::new();
 
-    let code_cnt = try!(inp.read_bits(9));
-    for i in 0..code_cnt {
-        let i = try!(inp.read_bits(9)) as Symbol;
-        let f = try!(inp.read_bits(32)) as u32;
-        state.freqs[i as usize] = f;
-    }
-    // Build Huffman tree and generate prefix codes.
+    // Build initial Huffman tree and generate prefix codes. This is only used for empty files.
     state.build_tree();
     state.build_codes(&mut codes);
 
-    let mut n = &state.nodes[0];
+    'outer:
     loop {
-        let b = try!(inp.read_bit());
-        let (next_node, code) =
-            match n {
-                &Node{entry: Entry::Leaf(c), ..} => {
-                    n = &state.nodes[0];
-                    (n, Some(c))
-                },
-                &Node{entry: Entry::Inner(ref n1, ref n2), ..} => {
-                    if b {
-                        (&*n1, None)
-                    } else {
-                        (&*n2, None)
-                    }
-                },
-            };
-        if let Some(c) = code {
-            if c == EOF {
-                break;
-            } else {
-                try!(output.write(&[c as u8]));
+        state.reset();
+        
+        let code_cnt = try!(inp.read_bits(9));
+        for _ in 0..code_cnt {
+            let i = try!(inp.read_bits(9)) as Symbol;
+            let f = try!(inp.read_bits(16)) as u32;
+            state.freqs[i as usize] = f;
+        }
+        
+        // Build Huffman tree and generate prefix codes.
+        state.build_tree();
+        state.build_codes(&mut codes);
+
+        let root_node = &state.nodes[0];
+        let mut n = root_node;
+        'inner:
+        loop {
+            let b = try!(inp.read_bit());
+//            println!("processing bit {}", b);
+            let (next_node, code) =
+                match n {
+                    &Node{entry: Entry::Leaf(c), ..} => {
+                        n = root_node;
+                        (n, Some(c))
+                    },
+                    &Node{entry: Entry::Inner(ref n1, ref n2), ..} => {
+                        if b {
+                            (&*(*n1), None)
+                        } else {
+                            (&*(*n2), None)
+                        }
+                    },
+                };
+            n = next_node;
+            if let Some(c) = code {
+                if c == EOB {
+                    break 'inner;
+                } else if c == EOF {
+                    break 'outer;
+                } else {
+                    try!(output.write(&[c as u8]));
+                    println!("{}", (c as u8) as char);
+                }
             }
         }
     }
@@ -202,15 +235,22 @@ pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error
 #[cfg(test)]
 mod test {
     use ::std::io::Cursor;
-    use super::{compress, decompress};
+    use super::{compress}; //, decompress};
     
     #[test]
-    fn compress_decompress() {
-        let input = include_bytes!("huff.rs");
+    fn compress_empty() {
+        let input = [];
         let compressed = compress(Cursor::new(&input[..]), vec![]).unwrap();
-        let decompressed = decompress(Cursor::new(&compressed[..]), vec![]).unwrap();
-        println!("len: {} -> {}", input.len(), compressed.len());
-        assert!(false);
-//        assert_eq!(&input[..], &decompressed[..]);
+        let expected = [0u8];
+        println!("compressed: {:?}", compressed);
+        assert_eq!(&expected[..], &compressed[..]);
     }
+
+    // #[test]
+    // fn compress_decompress() {
+    //     let input = include_bytes!("huff.rs");
+    //     let compressed = compress(Cursor::new(&input[..]), vec![]).unwrap();
+    //     let decompressed = decompress(Cursor::new(&compressed[..]), vec![]).unwrap();
+    //     assert_eq!(&input[..], &decompressed[..]);
+    // }
 }
