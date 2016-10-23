@@ -1,23 +1,30 @@
 // Copyright 2016 Martin Grabmueller. See the LICENSE file at the
 // top-level directory of this distribution for license information.
 
-//! Simple implementation of an LZ77+Huffman compressor.
+//! Simple implementation of an LZ77 compressor.
 
 use std::io::{Read, Write};
 use std::io;
 
-const MAX_MATCH: usize = 1 << 4;
-const MIN_MATCH: usize = 3;
+use error::Error;
 
-const WINDOW_SIZE: usize = 1 << 12;
-//const WINDOW_SIZE: usize = 30;
-const LOOK_AHEAD_SIZE: usize = MAX_MATCH + MIN_MATCH;
+const LENGTH_BITS: usize = 4;
+const OFFSET_BITS: usize = 12;
+
+const MIN_MATCH: usize = 3;
+const MAX_LENGTH: usize = ((1 << LENGTH_BITS) - 1) + MIN_MATCH;
+
+const WINDOW_SIZE: usize = 1 << OFFSET_BITS;
+const LOOK_AHEAD_SIZE: usize = MAX_LENGTH;
 
 const WINDOW_BUFFER_SIZE: usize = WINDOW_SIZE * 2 + LOOK_AHEAD_SIZE;
 const HASHTAB_SIZE: usize = 1 << 10;
-//const HASHTAB_SIZE: usize = 1 << 5;
 
+// Marks unused hash table and hash position slots.
 const UNUSED: usize = !0;
+
+// Max. 2 bytes for pos/len * 8 + token.
+const MAX_RUN_LENGTH: usize = 2 * 8 + 1;
 
 pub struct CompressWriter<W> {
     inner:    W,
@@ -29,7 +36,7 @@ pub struct CompressWriter<W> {
 
     emit_token: u8,
     emit_cnt: usize,
-    emit_data: [u8; 17],
+    emit_data: [u8; MAX_RUN_LENGTH],
     emit_len: usize,
     hash_collisions: usize,
 }
@@ -37,16 +44,16 @@ pub struct CompressWriter<W> {
 impl<W: Write> CompressWriter<W> {
     pub fn new(inner: W) -> CompressWriter<W>{
         CompressWriter {
-            inner:    inner,
-            window:   [0; WINDOW_BUFFER_SIZE],
-            hashtab:  [UNUSED; HASHTAB_SIZE],
-            hashes:   [UNUSED; WINDOW_BUFFER_SIZE],
-            position: 0,
-            limit:    0,
+            inner:      inner,
+            window:     [0; WINDOW_BUFFER_SIZE],
+            hashtab:    [UNUSED; HASHTAB_SIZE],
+            hashes:     [UNUSED; WINDOW_BUFFER_SIZE],
+            position:   0,
+            limit:      0,
             emit_token: 0,
-            emit_cnt: 0,
-            emit_data: [0; 2 * 8 + 1], // max. 2 bytes for pos/len * 8 + token
-            emit_len: 0,
+            emit_cnt:   0,
+            emit_data:  [0; MAX_RUN_LENGTH],
+            emit_len:   0,
             hash_collisions: 0,
         }
     }
@@ -124,7 +131,9 @@ impl<W: Write> CompressWriter<W> {
     }
 
     fn emit_flush(&mut self) -> io::Result<()> {
-        
+        if self.emit_cnt < 8 && self.emit_cnt > 0 {
+            self.emit_token <<= 8 - self.emit_cnt;
+        }
         self.emit_data[0] = self.emit_token;
         try!(self.inner.write(&self.emit_data[0..self.emit_len + 1]));
         self.emit_token = 0;
@@ -145,11 +154,16 @@ impl<W: Write> CompressWriter<W> {
     }
 
     fn emit_match(&mut self, ofs: usize, len: usize) -> io::Result<()> {
+        assert!(ofs > 0);
+        assert!(ofs < WINDOW_SIZE);
+        assert!(len >= MIN_MATCH);
+        assert!(len - MIN_MATCH <= 15);
+        
         if self.emit_cnt == 8 {
             try!(self.emit_flush());
         }
-        let lp1: u8 = ((((len - MIN_MATCH) as u8) & 0x0f)  << 4) | (ofs as u8) & 0x0f;
-        let p2: u8 = ((ofs as u8) >> 4) & 0xff;
+        let lp1: u8 = ((((len - MIN_MATCH) as u8) & 0x0f) << 4) | (ofs as u8) & 0x0f;
+        let p2: u8 = (ofs >> 4) as u8;
         self.emit_token = self.emit_token << 1;
         self.emit_data[self.emit_len + 1] = lp1;
         self.emit_data[self.emit_len + 2] = p2;
@@ -166,8 +180,9 @@ impl<W: Write> CompressWriter<W> {
             let search_pos = self.hashtab[h];
             let mut match_len = 0;
 
-            if search_pos != UNUSED {
-                for i in 0..MAX_MATCH {
+            if search_pos != UNUSED && search_pos < self.position
+                && self.position - search_pos < WINDOW_SIZE {
+                for i in 0..MAX_LENGTH {
                     if search_pos + i >= self.limit {
                         break;
                     }
@@ -176,27 +191,20 @@ impl<W: Write> CompressWriter<W> {
                     }
                     match_len += 1;
                 }
-                if match_len > 0 {
-                }
             }
             let replace =
-                if match_len > MIN_MATCH {
+                if match_len >= MIN_MATCH {
                     let ofs = self.position - search_pos;
                     try!(self.emit_match(ofs, match_len));
-                    println!("match: len: {}, ofs: {} ({} -> {})", match_len, ofs,
-                             search_pos, self.position);
+
                     match_len
                 } else {
                     let lit = self.window[self.position];
                     try!(self.emit_literal(lit));
-                    println!("literal: {:?}", self.window[self.position]);
                     1
                 };
             for _ in 0..replace {
                 let pos = self.position;
-                if pos >= WINDOW_SIZE {
-                    self.unhash(pos - WINDOW_SIZE);
-                }
                 self.hash(pos);
                 self.position += 1;
             }
@@ -222,18 +230,7 @@ impl<W: Write> CompressWriter<W> {
         self.hashes[i] = hash;
     }
     
-    fn unhash(&mut self, i: usize) {
-        let hashpos = self.hashes[i];
-        if hashpos != UNUSED {
-            self.hashtab[hashpos] = UNUSED;
-            self.hashes[i] = UNUSED;
-        }
-    }
-    
     fn slide_down(&mut self) {
-        for i in 0..WINDOW_BUFFER_SIZE {
-            self.unhash(i);
-        }
         for i in 0..WINDOW_SIZE + LOOK_AHEAD_SIZE {
             self.window[i] = self.window[i + WINDOW_SIZE];
         }
@@ -283,65 +280,225 @@ impl<W: Write> Write for CompressWriter<W> {
 }
 
 pub struct DecompressReader<R> {
-    inner: R,
+    inner:     R,
+    window:    [u8; WINDOW_BUFFER_SIZE],
+    position:  usize,
+    start:     usize,
 }
 
-impl<R> DecompressReader<R> {
+impl<R: Read> DecompressReader<R> {
     pub fn new(inner: R) -> DecompressReader<R> {
         DecompressReader {
-            inner: inner,
+            inner:     inner,
+            window:    [0; WINDOW_BUFFER_SIZE],
+            position:  0,
+            start:     0,
         }
+    }
+
+    fn slide_down(&mut self) {
+        for i in 0..WINDOW_SIZE + LOOK_AHEAD_SIZE {
+            self.window[i] = self.window[i + WINDOW_SIZE];
+        }
+        self.position -= WINDOW_SIZE;
+        self.start -= WINDOW_SIZE;
+    }
+
+    fn getc(&mut self) -> io::Result<Option<u8>> {
+        let mut buf = [0u8];
+        let n = try!(self.inner.read(&mut buf));
+        if n == 1 {
+            Ok(Some(buf[0]))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn copy_out(&mut self, output: &mut [u8], written: &mut usize) {
+        // Copy as much decoded as possible from the decoding
+        // window to the output array.
+        while self.start < self.position && *written < output.len() {
+            output[*written] = self.window[self.start];
+            *written += 1;
+            self.start += 1;
+        }
+    }
+    
+    fn process(&mut self, output: &mut[u8]) -> io::Result<usize> {
+        let mut written = 0;
+        while written < output.len() {
+
+            let token;
+            if let Some(tok) = try!(self.getc()) {
+                token = tok;
+            } else {
+                break;
+            }
+            for i in 0..8 {
+                if token & 1 << (7 - i) != 0 {
+                    if let Some(lit) = try!(self.getc()) {
+                        self.window[self.position] = lit;
+                        self.position += 1;
+
+                        self.copy_out(output, &mut written);
+                        if self.position >= WINDOW_SIZE * 2 {
+                            self.slide_down();
+                        }
+            
+                    } else {
+                        return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
+                                                  ""));
+                    }
+                } else {
+                    if let Some(b1) = try!(self.getc()) {
+                        if let Some(b2) = try!(self.getc()) {
+                            let w1 = b1 as usize;
+                            let w2 = b2 as usize;
+                    
+                            let len = (w1 >> 4) + MIN_MATCH;
+                            let ofs = (w1 & 0x0f) | (w2 << 4);
+
+                            for i in 0..len {
+                                self.window[self.position + i] =
+                                    self.window[self.position - ofs + i];
+                            }
+                            self.position += len;
+                            
+                            self.copy_out(output, &mut written);
+                            if self.position >= WINDOW_SIZE * 2 {
+                                self.slide_down();
+                            }
+                            
+                        } else {
+                            return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
+                                                      ""));
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(written)
     }
 }
 
 impl<R: Read> Read for DecompressReader<R> {
-    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-        Ok(0)
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        self.process(output)
     }
+}
+
+pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> {
+    let mut cw = CompressWriter::new(output);
+    try!(io::copy(&mut input, &mut cw));
+    try!(cw.flush());
+    Ok(cw.to_inner())
+}
+
+pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error> {
+    let mut cr = DecompressReader::new(input);
+    try!(io::copy(&mut cr, &mut output));
+    Ok(output)
 }
 
 #[cfg(test)]
 mod tests {
-//    use ::std::io::Cursor;
+    use ::std::io::Cursor;
 
-    use super::CompressWriter;
-    use ::std::io::Write;
+    use super::{CompressWriter, DecompressReader};
+    use ::std::io::{Read, Write};
     
     #[test]
     fn compress_empty() {
         let mut cw = CompressWriter::new(vec![]);
-        let data = b"abcdefghij";
-        cw.write(&data[..]).unwrap();
-        cw.dump_window();
-
-        cw.write(&data[..]).unwrap();
-        cw.dump_window();
-
-        cw.write(&data[..]).unwrap();
-        cw.dump_window();
-
-        cw.write(&data[..]).unwrap();
-        cw.dump_window();
-
+        let input = b"";
+        let expected = [0u8];
+        
+        cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
-        cw.dump_window();
         let compressed = cw.to_inner();
-        println!("comp: {:?}", compressed);
-        println!("ratio: {:.2}%",
-                 1f32 - (compressed.len() as f32 / (data.len() * 4) as f32));
-//        assert!(false);
+        
+        assert_eq!(&expected[..], &compressed[..]);
+    }
+
+    #[test]
+    fn compress_a() {
+        let mut cw = CompressWriter::new(vec![]);
+        let input = b"a";
+        let expected = [128u8, 97];
+        
+        cw.write(&input[..]).unwrap();
+        cw.flush().unwrap();
+        let compressed = cw.to_inner();
+        
+        assert_eq!(&expected[..], &compressed[..]);
+    }
+
+    #[test]
+    fn compress_aaa() {
+        let mut cw = CompressWriter::new(vec![]);
+        let input = b"aaaaaaaaa";
+        let expected = [128u8, 97, 81, 0];
+        
+        cw.write(&input[..]).unwrap();
+        cw.flush().unwrap();
+        let compressed = cw.to_inner();
+        assert_eq!(&expected[..], &compressed[..]);
+    }
+
+    #[test]
+    fn decompress_empty() {
+        let compressed = [];
+        let mut cr = DecompressReader::new(Cursor::new(compressed));
+        let expected: [u8; 0] = [];
+        
+        let mut decompressed = Vec::new();
+        let nread = cr.read_to_end(&mut decompressed).unwrap();
+        
+        assert_eq!(0, nread);
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+
+    #[test]
+    fn decompress_a() {
+        let compressed = [128u8, 97];
+        let mut cr = DecompressReader::new(Cursor::new(compressed));
+        let expected = b"a";
+        
+        let mut decompressed = Vec::new();
+        let nread = cr.read_to_end(&mut decompressed).unwrap();
+        
+        assert_eq!(1, nread);
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+
+    #[test]
+    fn decompress_aaa() {
+        let compressed = [128u8, 97, 81, 0];
+        let mut cr = DecompressReader::new(Cursor::new(compressed));
+        let expected = b"aaaaaaaaa";
+        
+        let mut decompressed = Vec::new();
+        let nread = cr.read_to_end(&mut decompressed).unwrap();
+        
+        assert_eq!(9, nread);
+        assert_eq!(&expected[..], &decompressed[..]);
     }
 
     #[test]
     fn compress_decompress() {
-        let input = include_bytes!("lzmg1.rs");
+        let input = include_bytes!("lzmg2.rs");
         let mut cw = CompressWriter::new(vec![]);
         cw.write_all(&input[..]).unwrap();
         cw.flush().unwrap();
-//        cw.dump_window();
         let compressed = cw.to_inner();
-        println!("ratio: {:.2}%",
-                 1f32 - (compressed.len() as f32 / input.len() as f32));
-        assert!(false);
+
+        let mut cr = DecompressReader::new(Cursor::new(compressed));
+        let mut decompressed = Vec::new();
+        let nread = cr.read_to_end(&mut decompressed).unwrap();
+
+        assert_eq!(input.len(), nread);
+        assert_eq!(&input[..], &decompressed[..]);
     }
 }

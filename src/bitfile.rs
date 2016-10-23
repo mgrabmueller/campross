@@ -2,8 +2,7 @@
 
 use std::io::Read;
 use std::io::Write;
-
-use error::Error;
+use std::io;
 
 pub struct BitReader<R> {
     inner: R,
@@ -33,7 +32,7 @@ impl<R: Read> BitReader<R> {
     }
 
     /// Read the next bit.
-    pub fn read_bit(&mut self) -> Result<bool, Error> {
+    pub fn read_bit(&mut self) -> io::Result<bool> {
         if self.mask == 0x80 {
             let mut b = [0u8; 1];
             let nread = try!(self.inner.read(&mut b[..]));
@@ -42,7 +41,7 @@ impl<R: Read> BitReader<R> {
                     self.extra_bits -= 1;
                     return Ok(false);
                 } else {
-                    return Err(Error::UnexpectedEof);
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, ""));
                 }
             }
             self.buf = b[0];
@@ -58,7 +57,7 @@ impl<R: Read> BitReader<R> {
     /// Read the next `count` bits, as the least significant bits of
     /// the returned 64-bit value.  Note that the maximum number of
     /// bits to read in one call is 64.
-    pub fn read_bits(&mut self, mut count: usize) -> Result<u64, Error> {
+    pub fn read_bits(&mut self, mut count: usize) -> io::Result<u64> {
         let mut result = 0;
         while count > 0 {
             let b = try!(self.read_bit());
@@ -69,6 +68,16 @@ impl<R: Read> BitReader<R> {
             count -= 1;
         }
         Ok(result)
+    }
+}
+
+impl<R: Read> Read for BitReader<R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        for i in 0..output.len() {
+            let b = try!(self.read_bits(8));
+            output[i] = b as u8;
+        }
+        Ok(output.len())
     }
 }
 
@@ -89,7 +98,7 @@ impl<W: Write> BitWriter<W> {
     }
 
     /// Write a bit to the underlying `Write` instance.
-    pub fn write_bit(&mut self, bit: bool) -> Result<(), Error> {
+    fn write_bit(&mut self, bit: bool) -> io::Result<()> {
         if bit {
             self.buf |= self.mask;
         }
@@ -104,27 +113,47 @@ impl<W: Write> BitWriter<W> {
 
     /// Write the `count` least significant bits from `value`.  Note
     /// that the maximum number of bits to write in one call is 64.
-    pub fn write_bits(&mut self, value: u64, mut count: usize) -> Result<(), Error> {
+    pub fn write_bits(&mut self, value: u64, mut count: usize) -> io::Result<()> {
         while count > 0 {
-            try!(self.write_bit((value & (1 << (count - 1))) != 0));
             count -= 1;
+            try!(self.write_bit((value & (1 << count)) != 0));
         }
         Ok(())
     }
 
     /// Flush any unwritten bits to the underlying `Write` instance
     /// and return it.
-    pub fn flush(mut self) -> Result<W, Error> {
+    pub fn do_flush(&mut self) -> io::Result<()> {
         if self.mask != 0x80 {
             try!(self.inner.write(&[self.buf]));
         }
-        Ok(self.inner)
+        Ok(())
+    }
+
+    pub fn to_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write> Write for BitWriter<W> {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        for i in 0..input.len() {
+            try!(self.write_bits(input[i] as u64, 8));
+        }
+        Ok(input.len())
+    }
+
+    /// Flush the compression writer.  This will cause all not-yet
+    /// written data to be compressed and written to the underlying
+    /// Writer, which is also flushed.
+    fn flush(&mut self) -> io::Result<()> {
+        self.do_flush()
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
     use super::BitReader;
     use super::BitWriter;
 
@@ -137,7 +166,8 @@ mod test {
         bf.write_bit(true).unwrap();
         bf.write_bit(true).unwrap();
         bf.write_bit(false).unwrap();
-        let o = bf.flush().unwrap();
+        bf.flush().unwrap();
+        let o = bf.to_inner();
         assert_eq!(vec![0b1011_0000], o);
     }
     
@@ -151,7 +181,8 @@ mod test {
         bf.write_bits(0b11111, 5).unwrap();
         bf.write_bits(0b11, 2).unwrap();
         bf.write_bits(0b11_0010_1010, 10).unwrap();
-        let o = bf.flush().unwrap();
+        bf.flush().unwrap();
+        let o = bf.to_inner();
         assert_eq!(vec![0b1011_0000, 0b0101_1111, 0b1111_0010, 0b1010_0000], o);
     }
     

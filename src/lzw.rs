@@ -109,7 +109,8 @@ pub fn compress<R, W>(mut input: R, output: W) -> Result<W, Error>
     }
 
     try!(out.write_bits(EOF, state.code_len));
-    out.flush()
+    out.flush().unwrap();
+    Ok(out.to_inner())
 }
 
 pub fn decompress<R, W>(input: R, mut output: W) -> Result<W, Error>

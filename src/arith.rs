@@ -159,9 +159,9 @@ impl Encoder {
     }
     
     fn output_bit_plus_pending<W: Write>(&mut self, bit: usize, pending_bits: &mut usize, bw: &mut BitWriter<W>) -> Result<(), Error> {
-        try!(bw.write_bit(bit != 0));
+        try!(bw.write_bits(bit as u64, 1));
         while *pending_bits > 0 {
-            try!(bw.write_bit(bit == 0));
+            try!(bw.write_bits((1 - bit) as u64, 1));
             *pending_bits -= 1;
         }
         Ok(())
@@ -234,7 +234,8 @@ impl Encoder {
         }
 
         // Flush accumulated bits and return the underlying writer.
-        outp.flush()
+        outp.flush().unwrap();
+        Ok(outp.to_inner())
     }
 
 }
@@ -270,18 +271,6 @@ impl Decoder {
         let mut low: u64  = 0;
         let mut high: u64 = MAX_CODE;
         let mut value: u64 = try!(inp.read_bits(32));
-
-        // for _ in 0..32 {
-        //     let bit =
-        //         match inp.read_bit() {
-        //             Ok(true) => 1,
-        //             Ok(false) => 0,
-        //             Err(Error::UnexpectedEof) => break,
-        //             Err(e) => return Err(e),
-        //         };
-        //     value <<= 1;
-        //     value += bit;
-        // }
 
         loop {
             let range: u64 = (high as u64) - (low as u64) + 1;
@@ -321,7 +310,7 @@ impl Decoder {
                 //     Err(e)=> return Err(e),
                 // };
                 // value += in_bit;
-                value += if try!(inp.read_bit()) { 1 } else { 0 };
+                value += try!(inp.read_bits(1));
             }
         }
 
