@@ -106,7 +106,7 @@ impl<R: Read, W: Write> Compressor<R, W> {
                         break;
                     }
                     iterations += 1;
-                    if iterations > 20 {
+                    if iterations > 10 {
                         break;
                     }
                 }
@@ -301,7 +301,7 @@ impl<R: Read, W: Write> Decompressor<R, W> {
             if let Some(token) = try!(self.getc()) {
                 let lit_tok = token >> 4;
                 let match_tok = token & 0x0f;
-                let (lit_len, extra_lit_len) =
+                let (lit_len, _extra_lit_len) =
                     if lit_tok == 15 {
                         try!(self.get_len())
                     } else {
@@ -319,14 +319,14 @@ impl<R: Read, W: Write> Decompressor<R, W> {
                         return Err(Error::UnexpectedEof);
                     }
                 }
-                let (match_len, extra_match_len) =
+                let (match_len, _extra_match_len) =
                     if match_tok == 15 {
                         try!(self.get_len())
 
                     } else {
                         (match_tok as usize, 0)
                     };
-                let (match_pos, match_pos_len) = try!(self.get_len());
+                let (match_pos, _match_pos_len) = try!(self.get_len());
 //                println!("literal length: {}, match length: {}, match pos: {}",
 //                         lit_len, match_len, match_pos);
                 for i in 0..match_len {
@@ -336,9 +336,9 @@ impl<R: Read, W: Write> Decompressor<R, W> {
                     current_position = self.mod_window(current_position + 1);
                     mtch.push(c);
                 }
-                let enc_len = 1 + extra_lit_len + lit_len + extra_match_len + match_pos_len;
-                let dec_len = lit_len + match_len;
-                println!("{:?} {:?}; {} -> {}", String::from_utf8_lossy(&lit), String::from_utf8_lossy(&mtch), enc_len, dec_len);
+//                let enc_len = 1 + extra_lit_len + lit_len + extra_match_len + match_pos_len;
+//                let dec_len = lit_len + match_len;
+//                println!("{:?} {:?}; {} -> {}", String::from_utf8_lossy(&lit), String::from_utf8_lossy(&mtch), enc_len, dec_len);
             } else {
                 break;
             }
