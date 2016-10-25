@@ -215,11 +215,15 @@ fn do_test(input: &str, method: Method) {
     };
     assert_eq!(compressed_size, compressed_size2);
 
+    let compress_secs = (compress_duration.as_secs() * 1_000 +
+        compress_duration.subsec_nanos() as u64/ 1_000_000) as f64 / 1000.0;
+    let decompress_secs = (decompress_duration.as_secs() * 1_000 +
+        decompress_duration.subsec_nanos() as u64 / 1_000_000) as f64 / 1000.0;
     println!("Original size: {}", orig_size);
     println!("Compressed size: {}", compressed_size);
     println!("Ratio: {:.2}", compressed_size as f32 / orig_size as f32);
-    println!("Compression speed: {} MB/s", orig_size as f32 / (compress_duration.as_secs() as f32) / (1024.0*1024.0));
-    println!("Decompression speed: {} MB/s", orig_size as f32 / (decompress_duration.as_secs() as f32) / (1024.0*1024.0));
+    println!("Compression speed: {} MB/s", orig_size as f64 / compress_secs / (1024.0*1024.0));
+    println!("Decompression speed: {} MB/s", orig_size as f64 / decompress_secs / (1024.0*1024.0));
 
 
     if orig_size != decompressed_size {

@@ -11,7 +11,7 @@ use std::io;
 use error::Error;
 use bitfile::{BitWriter, BitReader};
 
-const BLOCK_SIZE: usize = 1024 * 32;
+const BLOCK_SIZE: usize = 1024 * 64;
 const EOB: usize = 256;
 const EOF: usize = 257;
 
@@ -50,6 +50,23 @@ impl<W: Write> CompressWriter<W> {
         }
     }
 
+    fn reset(&mut self) {
+        for i in 0..self.freqs.len() {
+            self.freqs[i] = 0;
+        }
+        for i in 0..self.tree.len() {
+            self.tree[i].weight = 0;
+            self.tree[i].child0 = 0;
+            self.tree[i].child1 = 0;
+            self.tree[i].parent = 0;
+            self.tree[i].active = false;
+        }
+        for i in 0..self.codes.len() {
+            self.codes[i].0 = 0;
+            self.codes[i].1 = 0;
+        }
+    }
+    
     fn count_freqs(&mut self) {
         for i in 0..EOB {
             self.freqs[i] = 0;
@@ -102,7 +119,6 @@ impl<W: Write> CompressWriter<W> {
                     }
                 }
             }
-//            println!("min1 {} min2 {}", min1, min2);
             if min2 == last_node_idx {
                 break;
             }
@@ -120,36 +136,36 @@ impl<W: Write> CompressWriter<W> {
         next_free - 1
     }
 
-    fn dump_freqs(&self) {
-        for i in 0..EOF + 1 {
-            if self.freqs[i] > 0 {
-                match i {
-                    EOB => println!("EOB: {}", self.freqs[i]),
-                    EOF => println!("EOF: {}", self.freqs[i]),
-                    _ =>
-                        println!("{:3} {:?}: {}", i, (i as u8) as char, self.freqs[i]),
-                }
-            }
-        }
-    }
+    // fn dump_freqs(&self) {
+    //     for i in 0..EOF + 1 {
+    //         if self.freqs[i] > 0 {
+    //             match i {
+    //                 EOB => println!("EOB: {}", self.freqs[i]),
+    //                 EOF => println!("EOF: {}", self.freqs[i]),
+    //                 _ =>
+    //                     println!("{:3} {:?}: {}", i, (i as u8) as char, self.freqs[i]),
+    //             }
+    //         }
+    //     }
+    // }
     
-    fn dump_tree(&self, root: usize, indent: usize) {
-        for _ in 0..indent {
-            print!(" ");
-        }
-        if root <= EOF {
-            match root {
-                EOB => println!("EOB"),
-                EOF => println!("EOF"),
-                _ if root < 256 => println!("{} {:?}", root, (root as u8) as char),
-                _ => println!("{}", root),
-            }
-        } else {
-            println!("{}", root);
-            self.dump_tree(self.tree[root].child0, indent + 1);
-            self.dump_tree(self.tree[root].child1, indent + 1);
-        }
-    }
+    // fn dump_tree(&self, root: usize, indent: usize) {
+    //     for _ in 0..indent {
+    //         print!(" ");
+    //     }
+    //     if root <= EOF {
+    //         match root {
+    //             EOB => println!("EOB"),
+    //             EOF => println!("EOF"),
+    //             _ if root < 256 => println!("{} {:?}", root, (root as u8) as char),
+    //             _ => println!("{}", root),
+    //         }
+    //     } else {
+    //         println!("{}", root);
+    //         self.dump_tree(self.tree[root].child0, indent + 1);
+    //         self.dump_tree(self.tree[root].child1, indent + 1);
+    //     }
+    // }
 
     fn calc_code(&self, root: usize, sym: Symbol) -> (u64, usize) {
         let mut node = sym as usize;
@@ -175,16 +191,44 @@ impl<W: Write> CompressWriter<W> {
             }
         }
     }
-    
-    fn process_block(&mut self, final_block: bool) -> io::Result<()> {
-        println!("");
-        self.count_freqs();
-        self.dump_freqs();
-        let root = self.build_tree();
-        self.dump_tree(root, 0);
 
-        self.calc_codes(root);
-
+    fn write_freqs(&mut self) -> io::Result<()> {
+        let mut first = 0;
+        while first < 255 && self.freqs[first] == 0 {
+            first += 1;
+        }
+            
+        while first < 256 {
+            let mut last = first + 1;
+            let mut next;
+            loop {
+                while last < 256 && self.freqs[last] != 0 {
+                    last += 1;
+                }
+                last -= 1;
+                next = last + 1;
+                while next < 256 && self.freqs[next] == 0 {
+                    next += 1;
+                }
+                if next == 256 {
+                    break;
+                }
+                if next - last > 3 {
+                    break;
+                }
+                last = next;
+            }
+            try!(self.inner.write_bits(first as u64, 8));
+            try!(self.inner.write_bits(last as u64, 8));
+            for i in first..last + 1 {
+                try!(self.inner.write_bits(self.freqs[i] as u64, 16));
+            }
+            first = next;
+        }
+        try!(self.inner.write_bits(0, 8));
+        
+        Ok(())
+        /*
         let mut sym_cnt = 0;
         for i in 0..EOF + 1 {
             if self.freqs[i] > 0 {
@@ -197,17 +241,30 @@ impl<W: Write> CompressWriter<W> {
                 try!(self.inner.write_bits(i as u64, 9));
                 try!(self.inner.write_bits(self.freqs[i] as u64, 16));
             }
-        }
+        }*/
+    }
+    
+    fn process_block(&mut self, final_block: bool) -> io::Result<()> {
+        self.reset();
+        self.count_freqs();
+//        self.dump_freqs();
+        let root = self.build_tree();
+//        self.dump_tree(root, 0);
+
+        self.calc_codes(root);
+
+        try!(self.write_freqs());
+        
         for i in 0..self.fill {
             let c = self.block[i];
             let (code, code_len) = self.codes[c as usize];
             try!(self.inner.write_bits(code, code_len));
-            println!("{:032b} {}", code, code_len);
+//            println!("{:032b} {}", code, code_len);
         }
         let marker = if final_block { EOF } else { EOB };
         let (code, code_len) = self.codes[marker as usize];
         try!(self.inner.write_bits(code, code_len));
-        println!("{:032b} {}", code, code_len);
+//        println!("{:032b} {}", code, code_len);
         self.fill = 0;
         Ok(())
     }
@@ -221,7 +278,7 @@ impl<W: Write> CompressWriter<W> {
                 self.block[self.fill + i] = input[input_ptr + i];
             }
             self.fill += cp;
-            input_ptr += 1;
+            input_ptr += cp;
             if self.fill == BLOCK_SIZE {
                 try!(self.process_block(false));
             }
@@ -253,6 +310,7 @@ pub struct DecompressReader<R> {
     inner: BitReader<R>,
     freqs: [usize; EOF + 1],
     tree:  [Node; 2 * (EOF + 1) + 1],
+    root: usize,
     in_block: bool,
     eof: bool,
 }
@@ -264,11 +322,25 @@ impl<R: Read> DecompressReader<R> {
             freqs: [0; EOF + 1],
             tree: [Node{weight: 0, child0: 0, child1: 0, parent: 0, active: false};
                    2 * (EOF + 1) + 1],
+            root: 0,
             in_block: false,
             eof: false,
         }
     }
 
+    fn reset(&mut self) {
+        for i in self.freqs.iter_mut() {
+            *i = 0;
+        }
+        for i in self.tree.iter_mut() {
+            i.weight = 0;
+            i.child0 = 0;
+            i.child1 = 0;
+            i.parent = 0;
+            i.active = false;
+        }
+    }
+    
     fn build_tree(&mut self) -> usize {
         for i in 0..EOF + 1 {
             if self.freqs[i] > 0 {
@@ -295,7 +367,6 @@ impl<R: Read> DecompressReader<R> {
                     }
                 }
             }
-//            println!("min1 {} min2 {}", min1, min2);
             if min2 == last_node_idx {
                 break;
             }
@@ -325,31 +396,57 @@ impl<R: Read> DecompressReader<R> {
         }
         Ok(n as Symbol)
     }
+
+    // fn dump_freqs(&self) {
+    //     for i in 0..EOF + 1 {
+    //         if self.freqs[i] > 0 {
+    //             match i {
+    //                 EOB => println!("EOB: {}", self.freqs[i]),
+    //                 EOF => println!("EOF: {}", self.freqs[i]),
+    //                 _ =>
+    //                     println!("{:3} {:?}: {}", i, (i as u8) as char, self.freqs[i]),
+    //             }
+    //         }
+    //     }
+    // }
+    
+    fn read_freqs(&mut self) -> io::Result<()> {
+        let mut first = try!(self.inner.read_bits(8)) as usize;
+        let mut last  = try!(self.inner.read_bits(8)) as usize;
+        loop {
+            for i in first..last + 1 {
+                let freq  = try!(self.inner.read_bits(16)) as usize;
+                self.freqs[i] = freq;
+            }
+            first = try!(self.inner.read_bits(8)) as usize;
+            if first == 0 {
+                break;
+            }
+            last  = try!(self.inner.read_bits(8)) as usize;
+        }
+        self.freqs[EOB] = 1;
+        self.freqs[EOF] = 1;
+        Ok(())
+    }
     
     fn process(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        let mut root = 0;
-        
+
         if self.eof {
             return Ok(0);
         }
         
         let mut written = 0;
         'outer:
-        loop {
+        while written < output.len() {
             if !self.in_block {
-                let sym_count = try!(self.inner.read_bits(9)) as usize;
-                for _ in 0..sym_count {
-                    let sym = try!(self.inner.read_bits(9));
-                    let freq = try!(self.inner.read_bits(16));
-                    self.freqs[sym as usize] = freq as usize;
-                }
-                self.freqs[EOB] = 1;
-                self.freqs[EOF] = 1;
-                root = self.build_tree();
+                self.reset();
+                try!(self.read_freqs());
+                self.root = self.build_tree();
                 self.in_block = true;
             }
             'inner:
-            for i in written..output.len() {
+            loop {
+                let root = self.root;
                 let b = try!(self.decode(root));
                 if b as usize == EOF {
                     self.eof = true;
@@ -358,8 +455,11 @@ impl<R: Read> DecompressReader<R> {
                     self.in_block = false;
                     break 'inner;
                 } else {
-                    output[i] = b as u8;
+                    output[written] = b as u8;
                     written += 1;
+                    if written == output.len() {
+                        break 'outer;
+                    }
                 }
             }
         }
@@ -389,8 +489,8 @@ pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error
 
 #[cfg(test)]
 mod test {
-    use ::std::io::Write;
-    use super::{CompressWriter}; //, decompress};
+    use ::std::io::{Cursor, Write, Read};
+    use super::{CompressWriter, DecompressReader};
     
     #[test]
     fn compress_empty() {
@@ -399,8 +499,7 @@ mod test {
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.to_inner();
-        let expected = [1, 64];
-        println!("compressed: {:?}", compressed);
+        let expected = [255, 255, 0, 0, 0, 128];
         assert_eq!(&expected[..], &compressed[..]);
     }
 
@@ -411,16 +510,164 @@ mod test {
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.to_inner();
-        let expected = [1, 152, 64, 0, 96];
-        println!("compressed: {:?}", compressed);
+        let expected = [97, 97, 0, 1, 0, 128];
         assert_eq!(&expected[..], &compressed[..]);
     }
 
-    // #[test]
-    // fn compress_decompress() {
-    //     let input = include_bytes!("huff.rs");
-    //     let compressed = compress(Cursor::new(&input[..]), vec![]).unwrap();
-    //     let decompressed = decompress(Cursor::new(&compressed[..]), vec![]).unwrap();
-    //     assert_eq!(&input[..], &decompressed[..]);
-    // }
+    #[test]
+    fn compress_aaa() {
+        let input = b"aaaaaaaaa";
+        let mut cw = CompressWriter::new(vec![]);
+        cw.write(&input[..]).unwrap();
+        cw.flush().unwrap();
+        let compressed = cw.to_inner();
+        let expected = [97, 97, 0, 9, 0, 255, 160];
+        assert_eq!(&expected[..], &compressed[..]);
+    }
+
+    #[test]
+    fn compress_lorem() {
+        let input = b"Lorem ipsum dolor sit amet, consetetur \
+                      sadipscing elitr, sed diam nonumy eirmod \
+                      tempor invidunt ut labore et dolore magna \
+                      aliquyam erat, sed diam voluptua. At vero \
+                      eos et accusam et justo duo dolores et ea \
+                      rebum. Stet clita kasd gubergren, no sea \
+                      takimata sanctus est Lorem ipsum dolor sit \
+                      amet. Lorem ipsum dolor sit amet, consetetur \
+                      sadipscing elitr, sed diam nonumy eirmod \
+                      tempor invidunt ut labore et dolore magna \
+                      aliquyam erat, sed diam voluptua. At vero \
+                      eos et accusam et justo duo dolores et ea \
+                      rebum. Stet clita kasd gubergren, no sea \
+                      takimata sanctus est Lorem ipsum dolor sit \
+                      amet.";
+        let mut cw = CompressWriter::new(vec![]);
+        cw.write(&input[..]).unwrap();
+        cw.flush().unwrap();
+        let compressed = cw.to_inner();
+        let expected =
+            [32, 32, 0, 99, 44, 46, 0, 8, 0, 0, 0, 6, 65, 65, 0, 2, 76, 76, 0,
+             4, 83, 83, 0, 2, 97, 121, 0, 44, 0, 6, 0, 12, 0, 26, 0, 56, 0, 0,
+             0, 8, 0, 0, 0, 30, 0, 2, 0, 4, 0, 18, 0, 32, 0, 20, 0, 42, 0, 10,
+             0, 2, 0, 32, 0, 36, 0, 50, 0, 30, 0, 6, 0, 0, 0, 0, 0, 4, 0, 207,
+             166, 11, 207, 8, 69, 229, 82, 166, 240, 123, 237, 70, 185, 241,
+             169, 192, 209, 168, 222, 44, 143, 8, 196, 230, 239, 18, 61, 103,
+             60, 2, 228, 118, 190, 117, 52, 87, 188, 27, 45, 23, 208, 184, 83,
+             115, 158, 99, 36, 158, 244, 223, 43, 203, 76, 56, 222, 85, 42, 97,
+             214, 221, 157, 251, 145, 191, 163, 219, 94, 26, 245, 207, 0, 185,
+             29, 175, 205, 82, 76, 53, 47, 39, 124, 223, 152, 53, 113, 81, 198,
+             251, 199, 20, 139, 94, 55, 191, 36, 109, 114, 74, 229, 82, 166,
+             17, 198, 241, 125, 134, 84, 92, 157, 247, 70, 252, 100, 123, 125,
+             229, 193, 119, 83, 40, 103, 88, 77, 207, 58, 240, 47, 237, 188,
+             53, 189, 191, 23, 60, 117, 35, 136, 223, 159, 76, 23, 158, 16,
+             139, 202, 165, 77, 224, 247, 218, 141, 201, 243, 233, 130, 243,
+             194, 17, 121, 84, 169, 188, 30, 251, 81, 174, 124, 106, 112, 52,
+             106, 55, 139, 35, 194, 49, 57, 187, 196, 143, 89, 207, 0, 185,
+             29, 175, 157, 77, 21, 239, 6, 203, 69, 244, 46, 20, 220, 231,
+             152, 201, 39, 189, 55, 202, 242, 211, 14, 55, 149, 74, 152, 117,
+             183, 103, 126, 228, 111, 232, 246, 215, 134, 189, 115, 192, 46,
+             71, 107, 243, 84, 147, 13, 75, 201, 223, 55, 230, 13, 92, 84,
+             113, 190, 241, 197, 34, 215, 141, 239, 201, 27, 92, 146, 185,
+             84, 169, 132, 113, 188, 95, 97, 149, 23, 39, 125, 209, 191, 25,
+             30, 223, 121, 112, 93, 212, 202, 25, 214, 19, 115, 206, 188, 11,
+             251, 111, 13, 111, 111, 197, 207, 29, 72, 226, 55, 231, 211, 5,
+             231, 132, 34, 242, 169, 83, 120, 61, 246, 163, 114, 103, 64];
+        assert_eq!(&expected[..], &compressed[..]);
+    }
+
+    #[test]
+    fn decompress_empty() {
+        let input = [255, 255, 0, 0, 0, 128];
+        let mut cr = DecompressReader::new(Cursor::new(input));
+        let mut decompressed = Vec::new();
+        let _ = cr.read_to_end(&mut decompressed).unwrap();
+        let expected = b"";
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+
+    #[test]
+    fn decompress_a() {
+        let input = [97, 97, 0, 1, 0, 128];
+        let mut cr = DecompressReader::new(Cursor::new(input));
+        let mut decompressed = Vec::new();
+        let _ = cr.read_to_end(&mut decompressed).unwrap();
+        let expected = b"a";
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+
+    #[test]
+    fn decompress_aaa() {
+        let input = [97, 97, 0, 9, 0, 255, 160];
+        let mut cr = DecompressReader::new(Cursor::new(input));
+        let mut decompressed = Vec::new();
+        let _ = cr.read_to_end(&mut decompressed).unwrap();
+        let expected = b"aaaaaaaaa";
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+
+    #[test]
+    fn decompress_lorem() {
+        let input =
+            [32, 32, 0, 99, 44, 46, 0, 8, 0, 0, 0, 6, 65, 65, 0, 2, 76, 76, 0,
+             4, 83, 83, 0, 2, 97, 121, 0, 44, 0, 6, 0, 12, 0, 26, 0, 56, 0, 0,
+             0, 8, 0, 0, 0, 30, 0, 2, 0, 4, 0, 18, 0, 32, 0, 20, 0, 42, 0, 10,
+             0, 2, 0, 32, 0, 36, 0, 50, 0, 30, 0, 6, 0, 0, 0, 0, 0, 4, 0, 207,
+             166, 11, 207, 8, 69, 229, 82, 166, 240, 123, 237, 70, 185, 241,
+             169, 192, 209, 168, 222, 44, 143, 8, 196, 230, 239, 18, 61, 103,
+             60, 2, 228, 118, 190, 117, 52, 87, 188, 27, 45, 23, 208, 184, 83,
+             115, 158, 99, 36, 158, 244, 223, 43, 203, 76, 56, 222, 85, 42, 97,
+             214, 221, 157, 251, 145, 191, 163, 219, 94, 26, 245, 207, 0, 185,
+             29, 175, 205, 82, 76, 53, 47, 39, 124, 223, 152, 53, 113, 81, 198,
+             251, 199, 20, 139, 94, 55, 191, 36, 109, 114, 74, 229, 82, 166,
+             17, 198, 241, 125, 134, 84, 92, 157, 247, 70, 252, 100, 123, 125,
+             229, 193, 119, 83, 40, 103, 88, 77, 207, 58, 240, 47, 237, 188,
+             53, 189, 191, 23, 60, 117, 35, 136, 223, 159, 76, 23, 158, 16,
+             139, 202, 165, 77, 224, 247, 218, 141, 201, 243, 233, 130, 243,
+             194, 17, 121, 84, 169, 188, 30, 251, 81, 174, 124, 106, 112, 52,
+             106, 55, 139, 35, 194, 49, 57, 187, 196, 143, 89, 207, 0, 185,
+             29, 175, 157, 77, 21, 239, 6, 203, 69, 244, 46, 20, 220, 231,
+             152, 201, 39, 189, 55, 202, 242, 211, 14, 55, 149, 74, 152, 117,
+             183, 103, 126, 228, 111, 232, 246, 215, 134, 189, 115, 192, 46,
+             71, 107, 243, 84, 147, 13, 75, 201, 223, 55, 230, 13, 92, 84,
+             113, 190, 241, 197, 34, 215, 141, 239, 201, 27, 92, 146, 185,
+             84, 169, 132, 113, 188, 95, 97, 149, 23, 39, 125, 209, 191, 25,
+             30, 223, 121, 112, 93, 212, 202, 25, 214, 19, 115, 206, 188, 11,
+             251, 111, 13, 111, 111, 197, 207, 29, 72, 226, 55, 231, 211, 5,
+             231, 132, 34, 242, 169, 83, 120, 61, 246, 163, 114, 103, 64];
+        let mut cr = DecompressReader::new(Cursor::new(&input[..]));
+        let mut decompressed = Vec::new();
+        let _ = cr.read_to_end(&mut decompressed).unwrap();
+        let expected = b"Lorem ipsum dolor sit amet, consetetur \
+                         sadipscing elitr, sed diam nonumy eirmod \
+                         tempor invidunt ut labore et dolore magna \
+                         aliquyam erat, sed diam voluptua. At vero \
+                         eos et accusam et justo duo dolores et ea \
+                         rebum. Stet clita kasd gubergren, no sea \
+                         takimata sanctus est Lorem ipsum dolor sit \
+                         amet. Lorem ipsum dolor sit amet, consetetur \
+                         sadipscing elitr, sed diam nonumy eirmod \
+                         tempor invidunt ut labore et dolore magna \
+                         aliquyam erat, sed diam voluptua. At vero \
+                         eos et accusam et justo duo dolores et ea \
+                         rebum. Stet clita kasd gubergren, no sea \
+                         takimata sanctus est Lorem ipsum dolor sit \
+                         amet.";
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+
+    #[test]
+    fn compress_decompress() {
+        let input = include_bytes!("huff.rs");
+        let mut cw = CompressWriter::new(vec![]);
+        cw.write(&input[..]).unwrap();
+        cw.flush().unwrap();
+        let compressed = cw.to_inner();
+        
+        let mut cr = DecompressReader::new(Cursor::new(&compressed[..]));
+        let mut decompressed = Vec::new();
+        let _ = cr.read_to_end(&mut decompressed).unwrap();
+        
+        assert_eq!(&input[..], &decompressed[..]);
+    }
 }
