@@ -43,20 +43,23 @@ impl SlidingWindow {
     /// look back at and `lookahead` elements to look ahead to.
     pub fn new(window_size: usize, lookahead_size: usize) -> SlidingWindow {
         let buf_size = window_size * 2 + lookahead_size;
-        SlidingWindow{
+        let mut sw = SlidingWindow{
             window: Vec::with_capacity(buf_size),
             window_buffer_size: buf_size,
             position: 0,
             limit: 0,
             window_size: window_size,
             lookahead_size: lookahead_size,
-        }
+        };
+        sw.window.resize(buf_size, 0);
+        sw
     }
 
     fn slide_down(&mut self) {
         assert!(self.position >= self.window_size);
         
         self.window.drain(0..self.window_size);
+        self.window.resize(self.window_buffer_size, 0);
         self.position -= self.window_size;
         self.limit -= self.window_size;
     }
@@ -69,7 +72,8 @@ impl SlidingWindow {
     pub fn push(&mut self, b: u8) {
         //        assert!(self.position + self.lookahead_size >= self.limit);
         assert!(self.limit < self.window_buffer_size);
-        self.window.push(b);
+//        self.window.push(b);
+        self.window[self.limit] = b;
         self.limit += 1;
     }
 

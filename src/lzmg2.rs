@@ -247,9 +247,6 @@ impl<R: Read> DecompressReader<R> {
                         if self.window.advance() {
                             self.start -= WINDOW_SIZE;
                         }
-
-                        self.copy_out(output, &mut written);
-            
                     } else {
                         return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
                                                   ""));
@@ -272,10 +269,7 @@ impl<R: Read> DecompressReader<R> {
                                 if self.window.advance() {
                                     self.start -= WINDOW_SIZE;
                                 }
-                            }
-                            
-                            self.copy_out(output, &mut written);
-                            
+                            }                            
                         } else {
                             return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
                                                       ""));
@@ -284,6 +278,8 @@ impl<R: Read> DecompressReader<R> {
                         break;
                     }
                 }
+                self.copy_out(output, &mut written);
+                            
             }
         }
         Ok(written)
