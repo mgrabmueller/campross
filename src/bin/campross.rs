@@ -222,8 +222,8 @@ fn do_test(input: &str, method: Method) {
     println!("Original size: {}", orig_size);
     println!("Compressed size: {}", compressed_size);
     println!("Ratio: {:.2}", compressed_size as f32 / orig_size as f32);
-    println!("Compression speed: {} MB/s", orig_size as f64 / compress_secs / (1024.0*1024.0));
-    println!("Decompression speed: {} MB/s", orig_size as f64 / decompress_secs / (1024.0*1024.0));
+    println!("Compression speed: {:.3} MB/s", orig_size as f64 / compress_secs / (1024.0*1024.0));
+    println!("Decompression speed: {:.3} MB/s", orig_size as f64 / decompress_secs / (1024.0*1024.0));
 
 
     if orig_size != decompressed_size {

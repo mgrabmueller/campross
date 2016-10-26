@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 use std::io;
 
 use error::Error;
+use window::SlidingWindow;
 
 const LENGTH_BITS: usize = 4;
 const OFFSET_BITS: usize = 12;
@@ -17,7 +18,6 @@ const MAX_LENGTH: usize = ((1 << LENGTH_BITS) - 1) + MIN_MATCH;
 const WINDOW_SIZE: usize = 1 << OFFSET_BITS;
 const LOOK_AHEAD_SIZE: usize = MAX_LENGTH;
 
-const WINDOW_BUFFER_SIZE: usize = WINDOW_SIZE * 2 + LOOK_AHEAD_SIZE;
 const HASHTAB_SIZE: usize = 1 << 10;
 
 // Marks unused hash table and hash position slots.
@@ -28,11 +28,8 @@ const MAX_RUN_LENGTH: usize = 2 * 8 + 1;
 
 pub struct CompressWriter<W> {
     inner:    W,
-    window:   [u8; WINDOW_BUFFER_SIZE],
+    window:   SlidingWindow,
     hashtab:  [usize; HASHTAB_SIZE],
-    hashes:   [usize; WINDOW_BUFFER_SIZE],
-    position: usize,
-    limit:    usize,
 
     emit_token: u8,
     emit_cnt: usize,
@@ -44,87 +41,13 @@ impl<W: Write> CompressWriter<W> {
     pub fn new(inner: W) -> CompressWriter<W>{
         CompressWriter {
             inner:      inner,
-            window:     [0; WINDOW_BUFFER_SIZE],
+            window:     SlidingWindow::new(WINDOW_SIZE, LOOK_AHEAD_SIZE),
             hashtab:    [UNUSED; HASHTAB_SIZE],
-            hashes:     [UNUSED; WINDOW_BUFFER_SIZE],
-            position:   0,
-            limit:      0,
             emit_token: 0,
             emit_cnt:   0,
             emit_data:  [0; MAX_RUN_LENGTH],
             emit_len:   0,
         }
-    }
-
-    pub fn dump_window(&self) {
-        println!("");
-        for i in 0..WINDOW_BUFFER_SIZE {
-            if i == 0 {
-                print!("|");
-            } else if i == WINDOW_SIZE {
-                print!("|");
-            } else if i == WINDOW_SIZE * 2 {
-                print!("|");
-            } else {
-                print!(" ");
-            }
-        }
-        println!("|");
-        for i in 0..WINDOW_BUFFER_SIZE + 1 {
-            if i == self.position + LOOK_AHEAD_SIZE {
-                print!("v");
-            } else {
-                print!(" ");
-            }
-        }
-        println!("");
-        for i in 0..self.limit {
-            if self.window[i] >= 32 && self.window[i] < 128 {
-                print!("{}", self.window[i] as char);
-            } else {
-                print!("?");
-            }
-        }
-        for _ in self.limit..WINDOW_BUFFER_SIZE {
-            print!("~");
-        }
-        println!("");
-        for i in 0..WINDOW_BUFFER_SIZE + 1 {
-            if i == self.position {
-                print!("p");
-            } else if i == self.limit {
-                print!("|");
-            } else if i + WINDOW_SIZE >= self.position && i < self.position {
-                print!("-");
-            } else {
-                print!(" ");
-            }
-        }
-        println!("");
-        for i in 0..WINDOW_BUFFER_SIZE + 1 {
-            if i == self.limit {
-                print!("l");
-            } else {
-                print!(" ");
-            }
-        }
-        println!("");
-        for i in 0..WINDOW_BUFFER_SIZE {
-            if self.hashes[i] == UNUSED {
-                print!(".");
-            } else {
-                print!("^");
-            }
-        }
-        println!("");
-        for i in 0..HASHTAB_SIZE {
-            if self.hashtab[i] == UNUSED {
-                print!("|--");
-            } else {
-                print!("|{:2}", self.hashtab[i]);
-            }
-        }
-        println!("|");
     }
 
     fn emit_flush(&mut self) -> io::Result<()> {
@@ -171,19 +94,20 @@ impl<W: Write> CompressWriter<W> {
     
     fn process(&mut self, flush: bool) -> io::Result<()> {
         let headroom = if flush { 0 } else { LOOK_AHEAD_SIZE };
-        while self.position + headroom < self.limit {
+        while self.window.position + headroom < self.window.limit {
 
-            let h = self.calc_hash(self.position);
+            let h = self.calc_hash(self.window.position);
             let search_pos = self.hashtab[h];
             let mut match_len = 0;
 
-            if search_pos != UNUSED && search_pos < self.position
-                && self.position - search_pos < WINDOW_SIZE {
+            if search_pos != UNUSED && search_pos < self.window.position
+                && self.window.position - search_pos < WINDOW_SIZE {
                 for i in 0..MAX_LENGTH {
-                    if search_pos + i >= self.limit {
+                    if self.window.position + i >= self.window.limit {
                         break;
                     }
-                    if self.window[search_pos + i] != self.window[self.position + i] {
+                    if self.window.window[search_pos + i] !=
+                        self.window.window[self.window.position + i] {
                         break;
                     }
                     match_len += 1;
@@ -191,19 +115,21 @@ impl<W: Write> CompressWriter<W> {
             }
             let replace =
                 if match_len >= MIN_MATCH {
-                    let ofs = self.position - search_pos;
+                    let ofs = self.window.position - search_pos;
                     try!(self.emit_match(ofs, match_len));
-
+ 
                     match_len
                 } else {
-                    let lit = self.window[self.position];
+                    let lit = self.window.window[self.window.position];
                     try!(self.emit_literal(lit));
                     1
                 };
-            for _ in 0..replace {
-                let pos = self.position;
-                self.hash(pos);
-                self.position += 1;
+            for i in 0..replace {
+                let pos = self.window.position;
+                self.hash(pos + i);
+                if self.window.advance() {
+                    self.slide_hashes();
+                }
             }
         }
         Ok(())
@@ -211,8 +137,8 @@ impl<W: Write> CompressWriter<W> {
 
     fn calc_hash(&self, i: usize) -> usize {
         let mut hash: usize = 0;
-        for x in i .. ::std::cmp::min(i + 3, self.limit) {
-            hash = (hash << 8) | self.window[x] as usize;
+        for x in i .. ::std::cmp::min(i + 3, self.window.limit) {
+            hash = (hash << 8) | self.window.window[x] as usize;
         }
         hash = ((hash >> 5) ^ hash) & (HASHTAB_SIZE - 1);
         hash
@@ -221,20 +147,18 @@ impl<W: Write> CompressWriter<W> {
     fn hash(&mut self, i: usize) {
         let hash = self.calc_hash(i);
         self.hashtab[hash] = i;
-        self.hashes[i] = hash;
-    }
-    
-    fn slide_down(&mut self) {
-        for i in 0..WINDOW_SIZE + LOOK_AHEAD_SIZE {
-            self.window[i] = self.window[i + WINDOW_SIZE];
-        }
-        self.position -= WINDOW_SIZE;
-        self.limit -= WINDOW_SIZE;
-        for i in 0..::std::cmp::min(self.position, WINDOW_SIZE) {
-            self.hash(i);
-        }
     }
 
+    fn slide_hashes(&mut self) {
+        for e in self.hashtab.iter_mut() {
+            if *e > WINDOW_SIZE {
+                *e -= WINDOW_SIZE;
+            } else {
+                *e = UNUSED;
+            }
+        }
+    }
+    
     pub fn to_inner(self) -> W {
         self.inner
     }
@@ -242,23 +166,21 @@ impl<W: Write> CompressWriter<W> {
 
 impl<W: Write> Write for CompressWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let space = WINDOW_BUFFER_SIZE - self.limit;
-        if space > 0 {
-            let amount = ::std::cmp::min(space, buf.len());
-            for t in 0..amount {
-                self.window[self.limit + t] = buf[t];
+        let mut written = 0;
+        while written < buf.len() {
+            let space = self.window.free_space();
+            let amount = ::std::cmp::min(space, buf.len() - written);
+            if amount == 0 {
+                break;
             }
-            self.limit += amount;
+            for t in 0..amount {
+                self.window.push(buf[written + t]);
+            }
+            written += amount;
 
             try!(self.process(false));
-            
-            if self.position >= WINDOW_SIZE * 2 {
-                self.slide_down();
-            }
-            Ok(amount)
-        } else {
-            Ok(0)
         }
+        Ok(written)
     }
 
     /// Flush the compression writer.  This will cause all not-yet
@@ -275,8 +197,7 @@ impl<W: Write> Write for CompressWriter<W> {
 
 pub struct DecompressReader<R> {
     inner:     R,
-    window:    [u8; WINDOW_BUFFER_SIZE],
-    position:  usize,
+    window:    SlidingWindow,
     start:     usize,
 }
 
@@ -284,18 +205,9 @@ impl<R: Read> DecompressReader<R> {
     pub fn new(inner: R) -> DecompressReader<R> {
         DecompressReader {
             inner:     inner,
-            window:    [0; WINDOW_BUFFER_SIZE],
-            position:  0,
+            window:    SlidingWindow::new(WINDOW_SIZE, LOOK_AHEAD_SIZE),
             start:     0,
         }
-    }
-
-    fn slide_down(&mut self) {
-        for i in 0..WINDOW_SIZE + LOOK_AHEAD_SIZE {
-            self.window[i] = self.window[i + WINDOW_SIZE];
-        }
-        self.position -= WINDOW_SIZE;
-        self.start -= WINDOW_SIZE;
     }
 
     fn getc(&mut self) -> io::Result<Option<u8>> {
@@ -311,8 +223,8 @@ impl<R: Read> DecompressReader<R> {
     fn copy_out(&mut self, output: &mut [u8], written: &mut usize) {
         // Copy as much decoded as possible from the decoding
         // window to the output array.
-        while self.start < self.position && *written < output.len() {
-            output[*written] = self.window[self.start];
+        while self.start < self.window.position && *written < output.len() {
+            output[*written] = self.window.window[self.start];
             *written += 1;
             self.start += 1;
         }
@@ -331,13 +243,12 @@ impl<R: Read> DecompressReader<R> {
             for i in 0..8 {
                 if token & 1 << (7 - i) != 0 {
                     if let Some(lit) = try!(self.getc()) {
-                        self.window[self.position] = lit;
-                        self.position += 1;
+                        self.window.push(lit);
+                        if self.window.advance() {
+                            self.start -= WINDOW_SIZE;
+                        }
 
                         self.copy_out(output, &mut written);
-                        if self.position >= WINDOW_SIZE * 2 {
-                            self.slide_down();
-                        }
             
                     } else {
                         return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
@@ -353,15 +264,17 @@ impl<R: Read> DecompressReader<R> {
                             let ofs = (w1 & 0x0f) | (w2 << 4);
 
                             for i in 0..len {
-                                self.window[self.position + i] =
-                                    self.window[self.position - ofs + i];
+                                let c = self.window.window[self.window.position
+                                                           - ofs + i];
+                                self.window.push(c);
                             }
-                            self.position += len;
+                            for _ in 0..len {
+                                if self.window.advance() {
+                                    self.start -= WINDOW_SIZE;
+                                }
+                            }
                             
                             self.copy_out(output, &mut written);
-                            if self.position >= WINDOW_SIZE * 2 {
-                                self.slide_down();
-                            }
                             
                         } else {
                             return Err(io::Error::new(io::ErrorKind::UnexpectedEof,

@@ -30,26 +30,26 @@ use std::cmp;
 ///  --------------------p-----l
 ///
 pub struct SlidingWindow {
-    window: Vec<u8>,
-    position: usize,
-    limit: usize,
+    pub window: Vec<u8>,
+    pub position: usize,
+    pub limit: usize,
     window_size: usize,
-    lookahead: usize,
-    window_buffer_size: usize,
+    lookahead_size: usize,
+    pub window_buffer_size: usize,
 }
 
 impl SlidingWindow {
     /// Create a new sliding window of `window_size` elements in to
     /// look back at and `lookahead` elements to look ahead to.
-    pub fn new(window_size: usize, lookahead: usize) -> SlidingWindow {
-        let buf_size = window_size * 2 + lookahead;
+    pub fn new(window_size: usize, lookahead_size: usize) -> SlidingWindow {
+        let buf_size = window_size * 2 + lookahead_size;
         SlidingWindow{
             window: Vec::with_capacity(buf_size),
             window_buffer_size: buf_size,
             position: 0,
             limit: 0,
             window_size: window_size,
-            lookahead: lookahead,
+            lookahead_size: lookahead_size,
         }
     }
 
@@ -63,31 +63,43 @@ impl SlidingWindow {
 
     /// Push one element to the end of the window.
     ///
-    /// # Panics Panics when more than `lookahead` elements are pushed
-    /// without consuming any elements.
+    /// # Panics Panics when more elements are pushed than fit without
+    /// consuming any elements.  The number of elements that fit can
+    /// be determined using `free_space()'.
     pub fn push(&mut self, b: u8) {
-        assert!(self.position + self.lookahead >= self.limit);
+        //        assert!(self.position + self.lookahead_size >= self.limit);
+        assert!(self.limit < self.window_buffer_size);
         self.window.push(b);
         self.limit += 1;
     }
 
     /// Consume one element of the window.  This increments the
-    /// pointer to the current element.
+    /// pointer to the current element.  Return `true` if the
+    /// operation resulted in shifting the window down, `false`
+    /// otherwise.
     ///
     /// # Panics
     /// Panics when the window is empty.
-    pub fn advance(&mut self) {
+    pub fn advance(&mut self) -> bool {
         assert!(self.position < self.limit);
+        self.position += 1;
         if self.position >= 2 * self.window_size {
             self.slide_down();
+            true
+        } else {
+            false
         }
-        self.position += 1;
     }
 
     pub fn is_empty(&self) -> bool {
         self.position == self.limit
     }
-    
+
+    /// Return the element at the current `position`, e.g., the first
+    /// element of the lookahead buffer.
+    ///
+    /// # Panics
+    /// Panics when the look-ahead buffer is empty.
     pub fn element(&self) -> u8 {
         assert!(self.position < self.limit);
 
@@ -107,10 +119,41 @@ impl SlidingWindow {
 
     /// Return a slice for the look-ahead buffer.
     pub fn lookahead_slice(&self) -> &[u8] {
-        let l = cmp::min(self.position + self.lookahead, self.limit);
+        let l = cmp::min(self.position + self.lookahead_size, self.limit);
         &self.window[self.position..l]
     }
 
+    /// Return a tuple with a slice for the complete current window,
+    /// including the look-ahead buffer; and the index in the slice
+    /// where the look-ahead buffer starts.
+    pub fn view(&self) -> (&[u8], usize) {
+        let f = self.position.saturating_sub(self.window_size);
+        let l = cmp::min(self.position + self.lookahead_size, self.limit);
+        let pos = self.position - f;
+        (&self.window[f..l], pos)
+    }
+
+    /// Return a tuple with a mutable slice for the complete current
+    /// window, including the look-ahead buffer; and the index in the
+    /// slice where the look-ahead buffer starts.
+    pub fn view_mut(&mut self) -> (&mut [u8], usize) {
+        let f = self.position.saturating_sub(self.window_size);
+        let l = cmp::min(self.position + self.lookahead_size, self.limit);
+        let pos = self.position - f;
+        (&mut self.window[f..l], pos)
+    }
+
+    /// Return the number of element that can be pushed to the window
+    /// before it overflows.
+    pub fn free_space(&self) -> usize {
+        self.window_buffer_size - self.limit
+    }
+
+    /// Return the current length of the look-ahead buffer.
+    pub fn lookahead_len(&self) -> usize {
+        cmp::min(self.limit - self.position, self.lookahead_size)
+    }
+    
     pub fn debug_print(&self) {
         println!("");
         for i in 0..self.window_buffer_size {
@@ -126,7 +169,7 @@ impl SlidingWindow {
         }
         println!("|");
         for i in 0..self.window_buffer_size + 1 {
-            if i == cmp::min(self.position + self.lookahead, self.limit) {
+            if i == cmp::min(self.position + self.lookahead_size, self.limit) {
                 print!("v");
             } else {
                 print!(" ");
@@ -178,6 +221,11 @@ mod tests {
         assert!(w.is_empty());
         assert_eq!(w.window_slice().len(), 0);
         assert_eq!(w.lookahead_slice().len(), 0);
+        {
+            let (s, p) = w.view();
+            assert_eq!(0, p);
+            assert_eq!(0, s.len());
+        }
 
         w.debug_print();
         
@@ -196,7 +244,7 @@ mod tests {
         assert_eq!(b'a', w.element());
         assert_eq!(b'a', w.lookahead_slice()[0]);
 
-        w.advance();
+        let _ = w.advance();
         
         w.debug_print();
 
@@ -205,6 +253,11 @@ mod tests {
         assert_eq!(2, w.lookahead_slice().len());
         assert_eq!(b'a', w.window_slice()[0]);
         assert_eq!(b'b', w.lookahead_slice()[0]);
+        {
+            let (s, p) = w.view();
+            assert_eq!(1, p);
+            assert_eq!(3, s.len());
+        }
 
         for _ in 0..6 {
             w.push(b'x');
@@ -216,7 +269,7 @@ mod tests {
         assert_eq!(b'b', w.lookahead_slice()[0]);
 
         for _ in 0..9 {
-            w.advance();
+            let _ = w.advance();
             w.push(b'y');
         }
         w.debug_print();
@@ -224,7 +277,7 @@ mod tests {
         assert_eq!(7, w.lookahead_slice().len());
 
         for _ in 0..3 {
-            w.advance();
+            let _ = w.advance();
         }
         w.debug_print();
         assert_eq!(13, w.window_slice().len());
@@ -233,7 +286,7 @@ mod tests {
         assert_eq!(b'y', w.lookahead_slice()[0]);
 
         for _ in 0..10 {
-            w.advance();
+            let _ = w.advance();
             w.push(b'z');
         }
         w.debug_print();
@@ -243,7 +296,7 @@ mod tests {
         assert_eq!(b'z', w.lookahead_slice()[0]);
 
         for _ in 0..15 {
-            w.advance();
+            let _ = w.advance();
             w.push(b'9');
         }
         w.debug_print();
@@ -262,7 +315,7 @@ mod tests {
         assert_eq!(b'9', w.lookahead_slice()[0]);
 
         for _ in 0..3 {
-            w.advance()
+            let _ = w.advance();
         }
         w.debug_print();
         assert_eq!(20, w.window_slice().len());
@@ -276,7 +329,12 @@ mod tests {
         assert_eq!(6, w.lookahead_slice().len());
         assert_eq!(b'z', w.window_slice()[0]);
         assert_eq!(b'9', w.lookahead_slice()[0]);
-
+        {
+            let (s, p) = w.view();
+            assert_eq!(20, p);
+            assert_eq!(26, s.len());
+            }
+        
         w.push(b'R');
     }
 
@@ -291,7 +349,7 @@ mod tests {
     #[should_panic]
     fn push_full() {
         let mut w = SlidingWindow::new(20, 7);
-        for _ in 0..9 {
+        for _ in 0..48 {
             w.push(b'g');
         }
     }
@@ -304,7 +362,7 @@ mod tests {
             w.push(b'g');
         }
         for _ in 0..8 {
-            w.advance();
+            let _ = w.advance();
         }
     }
 }
