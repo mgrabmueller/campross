@@ -8,6 +8,6 @@ pub mod lzw;
 pub mod lzmg1;
 pub mod lzmg2;
 pub mod huff;
-//pub mod range;
+pub mod window;
 
 

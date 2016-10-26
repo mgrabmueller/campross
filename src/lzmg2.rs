@@ -38,7 +38,6 @@ pub struct CompressWriter<W> {
     emit_cnt: usize,
     emit_data: [u8; MAX_RUN_LENGTH],
     emit_len: usize,
-    hash_collisions: usize,
 }
 
 impl<W: Write> CompressWriter<W> {
@@ -54,7 +53,6 @@ impl<W: Write> CompressWriter<W> {
             emit_cnt:   0,
             emit_data:  [0; MAX_RUN_LENGTH],
             emit_len:   0,
-            hash_collisions: 0,
         }
     }
 
@@ -127,7 +125,6 @@ impl<W: Write> CompressWriter<W> {
             }
         }
         println!("|");
-        println!("Hash coll: {}", self.hash_collisions);
     }
 
     fn emit_flush(&mut self) -> io::Result<()> {
@@ -223,9 +220,6 @@ impl<W: Write> CompressWriter<W> {
     
     fn hash(&mut self, i: usize) {
         let hash = self.calc_hash(i);
-        if self.hashtab[hash] != UNUSED {
-            self.hash_collisions += 1;
-        }
         self.hashtab[hash] = i;
         self.hashes[i] = hash;
     }
