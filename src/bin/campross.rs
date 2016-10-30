@@ -16,6 +16,7 @@ use campross::lzmg1;
 use campross::lzmg2;
 use campross::huff;
 use campross::lzp;
+use campross::binarith;
 
 #[derive(Debug)]
 enum Method {
@@ -25,6 +26,7 @@ enum Method {
     Lzmg2,
     Huff,
     Lzp,
+    BinArith,
 }
 
 fn do_compress(input: &str, output: &str, method: Method, stats: bool) {
@@ -51,6 +53,9 @@ fn do_compress(input: &str, output: &str, method: Method, stats: bool) {
             },
             Method::Lzp => {
                 lzp::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+            },
+            Method::BinArith => {
+                binarith::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
             },
         };
         out.flush().unwrap();
@@ -91,6 +96,9 @@ fn do_decompress(input: &str, output: &str, method: Method, _stats: bool) {
         Method::Lzp => {
             lzp::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
+        Method::BinArith => {
+            binarith::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+        },
     };
     out.flush().unwrap();
 }
@@ -116,6 +124,9 @@ fn do_inspect(input: &str, method: Method) {
         },
         Method::Lzp => {
             println!("inspect mode not supported for LZP encoder");
+        },
+        Method::BinArith => {
+            println!("inspect mode not supported for binary arithmetic encoder");
         },
     }
 }
@@ -164,6 +175,9 @@ fn do_test(input: &str, method: Method) {
                 Method::Lzp => {
                     lzp::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
+                Method::BinArith => {
+                    binarith::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                },
             };
             out.flush().unwrap();
         }
@@ -205,6 +219,9 @@ fn do_test(input: &str, method: Method) {
                 },
                 Method::Lzp => {
                     lzp::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                },
+                Method::BinArith => {
+                    binarith::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
             };
             out.flush().unwrap();
@@ -269,7 +286,7 @@ pub fn main() {
     opts.optflag("d", "decompress", "decompress the input file");
     opts.optflag("x", "examine", "examine a compressed file");
     opts.optflag("t", "test", "test compressor on a file");
-    opts.optopt("m", "method", "select compression method", "arith|lzw|lzmg1|lzmg2|huff|lzp");
+    opts.optopt("m", "method", "select compression method", "arith|lzw|lzmg1|lzmg2|huff|lzp|binarith");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
 
@@ -287,6 +304,7 @@ pub fn main() {
                         "lzmg2"  => Some(Method::Lzmg2),
                         "huff"  => Some(Method::Huff),
                         "lzp"  => Some(Method::Lzp),
+                        "binarith"  => Some(Method::BinArith),
                         _       => None,
                     }
                 } else {

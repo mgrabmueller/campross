@@ -76,7 +76,6 @@ impl<W: Write> Writer<W> {
     fn process_block(&mut self, final_block: bool) -> io::Result<()> {
         if self.block.len() >= MIN_BLOCK_SIZE || final_block {
             let bsz = self.block.len() as u32;
-            println!(" processing block of {} bytes", bsz);
             let sz = [(bsz & 0xff) as u8,
                       ((bsz >> 8) & 0xff) as u8,
                       ((bsz >> 16) & 0xff) as u8,
@@ -105,10 +104,8 @@ impl<W: Write> Writer<W> {
 impl<W: Write> Write for Writer<W> {
     fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
         let mut written = 0;
-        println!("write called with buffer of size {}", buf.len());
         while buf.len() > 0 {
             let sz = ::std::cmp::min(MAX_BLOCK_SIZE - self.block.len(), buf.len());
-            println!(" copying {} bytes to block", sz);
             let src = &buf[0..sz];
             buf = &buf[sz..];
             self.block.extend_from_slice(src);
@@ -131,6 +128,7 @@ pub struct Reader<R> {
     position: usize,
     block_length: usize,
     returned: usize,
+    eof: bool,
 }
 
 impl<R: Read> Reader<R> {
@@ -143,6 +141,7 @@ impl<R: Read> Reader<R> {
             position: 0,
             block_length: 0,
             returned: 0,
+            eof: false,
         }
     }
     
@@ -165,6 +164,10 @@ impl<R: Read> Reader<R> {
     }
     
     fn process(&mut self, output: &mut[u8]) -> io::Result<usize> {
+        if self.eof {
+            return Ok(0);
+        }
+        
         let mut written = 0;
         while written < output.len() {
 
@@ -175,25 +178,33 @@ impl<R: Read> Reader<R> {
                 let b4 = try!(self.getc());
                 let block_length =
                     match (b1, b2, b3, b4) {
+                        (None, _, _, _) => {
+                            self.eof = true;
+                            self.copy_out(output, &mut written);
+                            return Ok(written);
+                        },
                         (Some(c1), Some(c2), Some(c3), Some(c4)) =>
                             ((c1 as u64) +
                              ((c2 as u64) << 8) +
                              ((c3 as u64) << 16) +
                              ((c4 as u64) << 24)) as usize,
-                        _ =>
+                        _ => {
+                            self.eof = true;
                             return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
-                                                      "")),
+                                                      "cannot read block size"));
+                        },
                     };
-                println!(" decompressing block of {} bytes", block_length);
                 self.block_length = block_length;
                 self.in_block = true;
                 self.block.truncate(0);
                 self.position = 0;
+                self.returned = 0;
             }
             let mut token;
             if let Some(tok) = try!(self.getc()) {
                 token = tok;
             } else {
+                self.eof = true;
                 break;
             }
             for _ in 0..8 {
@@ -202,14 +213,16 @@ impl<R: Read> Reader<R> {
                         self.block.push(lit);
                         self.position += 1;
                     } else {
+                        self.eof = true;
                         return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
-                                                  ""));
+                                                  "cannot read literal"));
                     }
                 } else {
                     if let Some(_) = try!(self.getc()) {
                         return Err(io::Error::new(io::ErrorKind::UnexpectedEof,
-                                                  ""));
+                                                  "did not expect match"));
                     } else {
+                        self.eof = true;
                         self.copy_out(output, &mut written);
                         return Ok(written);
                     }
@@ -227,7 +240,6 @@ impl<R: Read> Reader<R> {
 
 impl<R: Read> Read for Reader<R> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        println!("reading into buffer of {} bytes", output.len());
         self.process(output)
     }
 }

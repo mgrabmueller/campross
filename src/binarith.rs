@@ -11,6 +11,8 @@
 use std::io::{Read, Write};
 use std::io;
 
+use error::Error;
+
 const B: usize = 60;
 const F: usize = 30;
 
@@ -140,11 +142,12 @@ impl<W: Write> Encoder<W> {
         if self.out_bits > 0 {
             try!(self.out_flush());
         }
+        try!(self.inner.flush());
         Ok(())
     }
 
     /// Extract the contained writer, consuming `self`.
-    pub fn to_inner(self) -> W {
+    pub fn into_inner(self) -> W {
         self.inner
     }
 }
@@ -238,10 +241,131 @@ impl<R: Read> Decoder<R> {
     }
 }
 
+pub struct Writer<W> {
+    encoder: Encoder<W>,
+    model: Vec<(Count, Count)>,
+    context: u16,
+}
+
+impl<W: Write> Writer<W> {
+    pub fn new(output: W) -> Writer<W> {
+        let mut model = Vec::new();
+        model.resize(1 << 16, (1, 1));
+        Writer{
+            encoder: Encoder::new(output),
+            model: model,
+            context: 0,
+        }
+    }
+
+    pub fn into_inner(self) -> W {
+        self.encoder.into_inner()
+    }
+}
+
+impl<W: Write> Write for Writer<W> {
+    fn write(&mut self, output: &[u8]) -> io::Result<usize> {
+        for b in output {
+            let mut byte = *b;
+            try!(self.encoder.encode(0, 100, 1));
+            for _ in 0..8 {
+                let bit = (byte >> 7) as Bit;
+                let c = self.model[self.context as usize];
+                try!(self.encoder.encode(bit, c.0, c.1));
+
+                if bit == 0 {
+                    self.model[self.context as usize].0 += 1;
+                } else {
+                    self.model[self.context as usize].1 += 1;
+                }
+                self.context = (self.context << 1) | bit as u16;
+                byte <<= 1;
+            }
+        }
+        
+        Ok(output.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        try!(self.encoder.encode(1, 100, 1));
+        try!(self.encoder.finish());
+        Ok(())
+    }
+}
+
+pub struct Reader<R> {
+    decoder: Decoder<R>,
+    model: Vec<(Count, Count)>,
+    context: u16,
+    eof: bool,
+}
+
+impl<R: Read> Reader<R> {
+    pub fn new(input: R) -> io::Result<Reader<R>> {
+        let dec = try!(Decoder::new(input));
+        let mut model = Vec::new();
+        model.resize(1 << 16, (1, 1));
+        Ok(Reader{
+            decoder: dec,
+            model: model,
+            context: 0,
+            eof: false,
+        })
+    }
+}
+
+impl<R: Read> Read for Reader<R> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if self.eof {
+            return Ok(0);
+        }
+        let mut nread = 0;
+        for b in output.iter_mut() {
+            let mut byte = 0u8;
+            let eof_flag = try!(self.decoder.decode(100, 1));
+            if eof_flag == 1 {
+                self.eof = true;
+                break;
+            }
+            for _ in 0..8 {
+                let c = self.model[self.context as usize];
+                let bit = try!(self.decoder.decode(c.0, c.1));
+
+                if bit == 0 {
+                    self.model[self.context as usize].0 += 1;
+                } else {
+                    self.model[self.context as usize].1 += 1;
+                }
+                self.context = (self.context << 1) | bit as u16;
+                byte = byte << 1 | bit as u8;
+            }
+            *b = byte;
+            nread += 1;
+        }
+        Ok(nread)
+    }
+}
+
+pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> {
+    let mut cw = Writer::new(output);
+    try!(io::copy(&mut input, &mut cw));
+    try!(cw.flush());
+    Ok(cw.into_inner())
+}
+
+pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error> {
+    let mut cr = try!(Reader::new(input));
+    try!(io::copy(&mut cr, &mut output));
+    Ok(output)
+}
+
+
+
+
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-    use super::{Encoder, Decoder};
+    use std::io::{Cursor, Write, Read};
+    use super::{Encoder, Decoder, Writer, Reader};
 
     #[test]
     fn encode_0() {
@@ -251,7 +375,7 @@ mod tests {
         e.encode(1, 1, 1).unwrap();
         e.finish().unwrap();
 
-        let o = e.to_inner();
+        let o = e.into_inner();
 
         assert_eq!(vec![80, 0, 0, 0, 0, 0, 0, 0, 0], o);
     }
@@ -279,7 +403,7 @@ mod tests {
         e.encode(0, 2, 1).unwrap();
         e.finish().unwrap();
 
-        let o = e.to_inner();
+        let o = e.into_inner();
 
         assert_eq!(vec![56, 227, 142, 56, 227, 142, 56, 240], o);
     }
@@ -308,14 +432,15 @@ mod tests {
         e.encode(1, 2, 1).unwrap();
         e.finish().unwrap();
 
-        let o = e.to_inner();
+        let o = e.into_inner();
 
         assert_eq!(vec![126, 107, 116, 240, 50, 145, 97, 251, 0], o);
     }
 
     #[test]
     fn decode_2() {
-        let mut d = Decoder::new(Cursor::new(vec![126, 107, 116, 240, 50, 145, 97, 251, 0])).unwrap();
+        let mut d = Decoder::new(Cursor::new(
+            vec![126, 107, 116, 240, 50, 145, 97, 251, 0])).unwrap();
         
         let b = d.decode(2, 1).unwrap();
         assert_eq!(1, b);
@@ -345,7 +470,7 @@ mod tests {
         }
         e.finish().unwrap();
 
-        let o = e.to_inner();
+        let o = e.into_inner();
         assert_eq!(
             vec![90, 45, 46, 155, 20, 36, 173, 47, 2, 136, 56, 106, 76,
                  39, 34, 243, 174, 18, 176, 28, 87, 111, 96, 65, 73,
@@ -386,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn compress_decompress() {
+    fn encode_decode() {
         let f = include_bytes!("binarith.rs");
         let original = &f[..];
         let mut e = Encoder::new(vec![]);
@@ -396,7 +521,7 @@ mod tests {
         }
         e.finish().unwrap();
 
-        let o = e.to_inner();
+        let o = e.into_inner();
 
         let mut d = Decoder::new(Cursor::new(o)).unwrap();
         for b in original {
@@ -404,5 +529,69 @@ mod tests {
             assert_eq!(*b, decoded);
         }
     }
-    
+
+    #[test]
+    fn compress_empty() {
+        let input = b"";
+        let mut c = Writer::new(vec![]);
+        c.write(input).unwrap();
+        c.flush().unwrap();
+        let compressed = c.into_inner();
+        let expected =
+            [126, 187, 144, 121, 169, 210, 96, 96, 0];            
+        assert_eq!(&expected[..], &compressed[..]);
+    }
+
+    #[test]
+    fn decompress_empty() {
+        let input =
+            [126, 187, 144, 121, 169, 210, 96, 96, 0];            
+        let mut d = Reader::new(Cursor::new(input)).unwrap();
+        let mut decompressed = Vec::new();
+        d.read_to_end(&mut decompressed).unwrap();
+        let expected: &[u8] = &[];
+            
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+    #[test]
+    fn compress_aaa() {
+        let input = b"aaaaaaaaa";
+        let mut c = Writer::new(vec![]);
+        c.write(input).unwrap();
+        c.flush().unwrap();
+        let compressed = c.into_inner();
+        let expected =
+            [53, 66, 117, 134, 245, 8, 246, 61, 63, 160, 94, 186, 160, 0];
+        assert_eq!(&expected[..], &compressed[..]);
+    }
+
+    #[test]
+    fn decompress_aaa() {
+        let input =
+            [53, 66, 117, 134, 245, 8, 246, 61, 63, 160, 94, 186, 160, 0];
+        let mut d = Reader::new(Cursor::new(input)).unwrap();
+        let mut decompressed = Vec::new();
+        let expected = b"aaaaaaaaa";
+        d.read_to_end(&mut decompressed).unwrap();
+            
+        assert_eq!(&expected[..], &decompressed[..]);
+    }
+
+    #[test]
+    fn compress_decompress() {
+        let f = include_bytes!("binarith.rs");
+        let original = &f[..];
+
+        let mut c = Writer::new(vec![]);
+        c.write(original).unwrap();
+        c.flush().unwrap();
+        let compressed = c.into_inner();
+            
+        let mut d = Reader::new(Cursor::new(compressed)).unwrap();
+        let mut decompressed = Vec::new();
+        d.read_to_end(&mut decompressed).unwrap();
+            
+        assert_eq!(&original[..], &decompressed[..]);
+    }
+
 }
