@@ -228,28 +228,12 @@ impl<W: Write> CompressWriter<W> {
         try!(self.inner.write_bits(0, 8));
         
         Ok(())
-        /*
-        let mut sym_cnt = 0;
-        for i in 0..EOF + 1 {
-            if self.freqs[i] > 0 {
-                sym_cnt += 1;
-            }
-        }
-        try!(self.inner.write_bits(sym_cnt as u64, 9));
-        for i in 0..EOB {
-            if self.freqs[i] > 0 {
-                try!(self.inner.write_bits(i as u64, 9));
-                try!(self.inner.write_bits(self.freqs[i] as u64, 16));
-            }
-        }*/
     }
     
     fn process_block(&mut self, final_block: bool) -> io::Result<()> {
         self.reset();
         self.count_freqs();
-//        self.dump_freqs();
         let root = self.build_tree();
-//        self.dump_tree(root, 0);
 
         self.calc_codes(root);
 
@@ -259,12 +243,10 @@ impl<W: Write> CompressWriter<W> {
             let c = self.block[i];
             let (code, code_len) = self.codes[c as usize];
             try!(self.inner.write_bits(code, code_len));
-//            println!("{:032b} {}", code, code_len);
         }
         let marker = if final_block { EOF } else { EOB };
         let (code, code_len) = self.codes[marker as usize];
         try!(self.inner.write_bits(code, code_len));
-//        println!("{:032b} {}", code, code_len);
         self.fill = 0;
         Ok(())
     }
