@@ -9,5 +9,6 @@ pub mod lzmg1;
 pub mod lzmg2;
 pub mod huff;
 pub mod window;
-
+pub mod lzp;
+pub mod binarith;
 

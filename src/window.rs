@@ -66,17 +66,29 @@ impl SlidingWindow {
 
     /// Push one element to the end of the window.
     ///
-    /// # Panics Panics when more elements are pushed than fit without
+    /// # Panics
+    /// Panics when more elements are pushed than fit without
     /// consuming any elements.  The number of elements that fit can
     /// be determined using `free_space()'.
     pub fn push(&mut self, b: u8) {
-        //        assert!(self.position + self.lookahead_size >= self.limit);
         assert!(self.limit < self.window_buffer_size);
-//        self.window.push(b);
         self.window[self.limit] = b;
         self.limit += 1;
     }
 
+    /// Move as many elements as possible from the given slice to the
+    /// end of the window.  Return the number of elements copied
+    /// (which can b zero if the window is full).
+    pub fn extend(&mut self, slice: &[u8]) -> usize {
+        let space = self.window_buffer_size - self.limit;
+        let amount = ::std::cmp::min(space, slice.len());
+        for i in 0..amount {
+            self.window[self.limit + i] = slice[i];
+        }
+        self.limit += amount;
+        amount
+    }
+    
     /// Consume one element of the window.  This increments the
     /// pointer to the current element.  Return `true` if the
     /// operation resulted in shifting the window down, `false`

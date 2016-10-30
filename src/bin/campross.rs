@@ -15,6 +15,7 @@ use campross::lzw;
 use campross::lzmg1;
 use campross::lzmg2;
 use campross::huff;
+use campross::lzp;
 
 #[derive(Debug)]
 enum Method {
@@ -23,6 +24,7 @@ enum Method {
     Lzmg1,
     Lzmg2,
     Huff,
+    Lzp,
 }
 
 fn do_compress(input: &str, output: &str, method: Method, stats: bool) {
@@ -46,6 +48,9 @@ fn do_compress(input: &str, output: &str, method: Method, stats: bool) {
             },
             Method::Huff => {
                 huff::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+            },
+            Method::Lzp => {
+                lzp::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
             },
         };
         out.flush().unwrap();
@@ -83,6 +88,9 @@ fn do_decompress(input: &str, output: &str, method: Method, _stats: bool) {
         Method::Huff => {
             huff::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
+        Method::Lzp => {
+            lzp::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+        },
     };
     out.flush().unwrap();
 }
@@ -105,6 +113,9 @@ fn do_inspect(input: &str, method: Method) {
         },
         Method::Huff => {
             println!("inspect mode not supported for Huffman encoder");
+        },
+        Method::Lzp => {
+            println!("inspect mode not supported for LZP encoder");
         },
     }
 }
@@ -150,6 +161,9 @@ fn do_test(input: &str, method: Method) {
                 Method::Huff => {
                     huff::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
+                Method::Lzp => {
+                    lzp::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                },
             };
             out.flush().unwrap();
         }
@@ -188,6 +202,9 @@ fn do_test(input: &str, method: Method) {
                 },
                 Method::Huff => {
                     huff::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                },
+                Method::Lzp => {
+                    lzp::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
             };
             out.flush().unwrap();
@@ -252,7 +269,7 @@ pub fn main() {
     opts.optflag("d", "decompress", "decompress the input file");
     opts.optflag("x", "examine", "examine a compressed file");
     opts.optflag("t", "test", "test compressor on a file");
-    opts.optopt("m", "method", "select compression method", "arith|lzw|lzmg1|lzmg2|huff");
+    opts.optopt("m", "method", "select compression method", "arith|lzw|lzmg1|lzmg2|huff|lzp");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
 
@@ -269,6 +286,7 @@ pub fn main() {
                         "lzmg1"  => Some(Method::Lzmg1),
                         "lzmg2"  => Some(Method::Lzmg2),
                         "huff"  => Some(Method::Huff),
+                        "lzp"  => Some(Method::Lzp),
                         _       => None,
                     }
                 } else {
