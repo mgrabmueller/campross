@@ -1,18 +1,21 @@
 extern crate campross;
 extern crate getopts;
 extern crate ring;
+extern crate mktemp;
 
 use std::time::Instant;
-use ring::digest;
-use getopts::Options;
 use std::fs::File;
 use std::io::{Write, Read};
 use std::io::{BufReader, BufWriter};
 use std::env;
 
+use ring::digest;
+use getopts::Options;
+use mktemp::Temp;
+
 use campross::arith;
 use campross::lzw;
-use campross::lzmg1;
+use campross::lz77;
 use campross::lzmg2;
 use campross::huff;
 use campross::lzp;
@@ -22,7 +25,7 @@ use campross::binarith;
 enum Method {
     Arith,
     Lzw,
-    Lzmg1,
+    Lz77,
     Lzmg2,
     Huff,
     Lzp,
@@ -42,8 +45,8 @@ fn do_compress(input: &str, output: &str, method: Method, stats: bool) {
             Method::Lzw => {
                 lzw::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
             },
-            Method::Lzmg1 => {
-                lzmg1::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+            Method::Lz77 => {
+                lz77::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
             },
             Method::Lzmg2 => {
                 lzmg2::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
@@ -84,8 +87,8 @@ fn do_decompress(input: &str, output: &str, method: Method, _stats: bool) {
         Method::Lzw => {
             lzw::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
-        Method::Lzmg1 => {
-            lzmg1::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+        Method::Lz77 => {
+            lz77::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
         Method::Lzmg2 => {
             lzmg2::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
@@ -113,8 +116,8 @@ fn do_inspect(input: &str, method: Method) {
         Method::Lzw => {
             lzw::inspect(BufReader::new(inf)).unwrap();
         },
-        Method::Lzmg1 => {
-            println!("inspect mode not supported for LZMG1 encoder");
+        Method::Lz77 => {
+            println!("inspect mode not supported for LZ77 encoder");
         },
         Method::Lzmg2 => {
             println!("inspect mode not supported for LZMG2 encoder");
@@ -132,8 +135,15 @@ fn do_inspect(input: &str, method: Method) {
 }
 
 fn do_test(input: &str, method: Method) {
-    let compressed_name = "/tmp/campross-test.compressed";
-    let decompressed_name = "/tmp/campross-test.decompressed";
+    let mut temp_dir = Temp::new_dir().unwrap();
+    let mut compressed_name_buf = temp_dir.to_path_buf();
+    compressed_name_buf.push("campross-test.compressed");
+    let compressed_name = compressed_name_buf.as_path();
+    
+    let mut decompressed_name_buf = temp_dir.to_path_buf();
+    decompressed_name_buf.push("campross-test.decompressed");
+    let decompressed_name = decompressed_name_buf.as_path();
+
     let orig_hash = {
         println!("Calculating hash for input file {}...", input);
         let mut buf = [0u8; 1024 * 4];
@@ -149,7 +159,7 @@ fn do_test(input: &str, method: Method) {
     let start_compress = Instant::now();
     let (orig_size, compressed_size) =
     {
-        println!("Compressing {} to {} (method: {:?})...", input, compressed_name,
+        println!("Compressing {} to {} (method: {:?})...", input, compressed_name.to_str().unwrap(),
                  method);
         {
             let inf = File::open(input).unwrap();
@@ -163,8 +173,8 @@ fn do_test(input: &str, method: Method) {
                 Method::Lzw => {
                     lzw::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
-                Method::Lzmg1 => {
-                    lzmg1::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                Method::Lz77 => {
+                    lz77::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
                 Method::Lzmg2 => {
                     lzmg2::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
@@ -193,8 +203,8 @@ fn do_test(input: &str, method: Method) {
     let decompress_start = Instant::now();
     let (compressed_size2, decompressed_size) =
     {
-        println!("Decompressing {} to {} (method: {:?})...", compressed_name,
-                 decompressed_name,
+        println!("Decompressing {} to {} (method: {:?})...", compressed_name.to_str().unwrap(),
+                 decompressed_name.to_str().unwrap(),
                  method);
         {
             let inf = File::open(compressed_name).unwrap();
@@ -208,8 +218,8 @@ fn do_test(input: &str, method: Method) {
                 Method::Lzw => {
                     lzw::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
-                Method::Lzmg1 => {
-                    lzmg1::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                Method::Lz77 => {
+                    lz77::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
                 Method::Lzmg2 => {
                     lzmg2::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
@@ -236,7 +246,7 @@ fn do_test(input: &str, method: Method) {
     let decompress_duration = decompress_start.elapsed();
     
     let decompressed_hash = {
-        println!("Calculating hash for decompressed file {}...", decompressed_name);
+        println!("Calculating hash for decompressed file {}...", decompressed_name.to_str().unwrap());
         let mut buf = [0u8; 1024 * 4];
         let mut ctx = digest::Context::new(&digest::SHA256);
         let mut inf = File::open(decompressed_name).expect("cannot open input file");
@@ -261,8 +271,10 @@ fn do_test(input: &str, method: Method) {
 
 
     if orig_size != decompressed_size {
+        temp_dir.release();
         println!("ERROR: original and decompressed file differ in size");
     } else if orig_hash.as_ref() != decompressed_hash.as_ref() {
+        temp_dir.release();
         println!("ERROR: original and decompressed file hashes differ");
     } else {
         println!("OK.");
@@ -286,7 +298,7 @@ pub fn main() {
     opts.optflag("d", "decompress", "decompress the input file");
     opts.optflag("x", "examine", "examine a compressed file");
     opts.optflag("t", "test", "test compressor on a file");
-    opts.optopt("m", "method", "select compression method", "arith|lzw|lzmg1|lzmg2|huff|lzp|binarith");
+    opts.optopt("m", "method", "select compression method", "arith|lzw|lz77|lzmg2|huff|lzp|binarith");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
 
@@ -300,7 +312,7 @@ pub fn main() {
                     match &s[..] {
                         "arith" => Some(Method::Arith),
                         "lzw"   => Some(Method::Lzw),
-                        "lzmg1"  => Some(Method::Lzmg1),
+                        "lz77"   => Some(Method::Lz77),
                         "lzmg2"  => Some(Method::Lzmg2),
                         "huff"  => Some(Method::Huff),
                         "lzp"  => Some(Method::Lzp),

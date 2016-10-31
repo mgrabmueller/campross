@@ -6,8 +6,7 @@
 use std::io::{Read, Write};
 use std::io;
 
-pub const MAX_BLOCK_SIZE: usize = 1024 * 64;
-pub const MIN_BLOCK_SIZE: usize = 1024 * 16;
+pub const BLOCK_SIZE: usize = 1024 * 64;
 
 pub const LENGTH_BITS: usize = 8;
 pub const MAX_MATCH_LEN: usize = 1 << LENGTH_BITS;
@@ -28,7 +27,7 @@ impl<W: Write> Writer<W> {
     pub fn new(inner: W) -> Writer<W>{
         Writer {
             inner:  inner,
-            block: Vec::with_capacity(MIN_BLOCK_SIZE),
+            block: Vec::with_capacity(BLOCK_SIZE),
             out_flags: 0,
             out_count: 0,
             out_data: [0; 1 + 8],
@@ -73,25 +72,24 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
-    fn process_block(&mut self, final_block: bool) -> io::Result<()> {
-        if self.block.len() >= MIN_BLOCK_SIZE || final_block {
-            let bsz = self.block.len() as u32;
-            let sz = [(bsz & 0xff) as u8,
-                      ((bsz >> 8) & 0xff) as u8,
-                      ((bsz >> 16) & 0xff) as u8,
-                      ((bsz >> 24) & 0xff) as u8];
-            try!(self.inner.write_all(&sz[..]));
+    fn process_block(&mut self) -> io::Result<()> {
+        let bsz = self.block.len() as u32;
+        let sz = [(bsz & 0xff) as u8,
+                  ((bsz >> 8) & 0xff) as u8,
+                  ((bsz >> 16) & 0xff) as u8,
+                  ((bsz >> 24) & 0xff) as u8];
+        try!(self.inner.write_all(&sz[..]));
             
-            let mut position = 0;
-            while position < self.block.len() {
-                let lit = self.block[position];
-                try!(self.emit_lit(lit));
-                position += 1;
-            }
-
-            self.block.truncate(0);
-            try!(self.emit_flush());
+        let mut position = 0;
+        while position < self.block.len() {
+            let lit = self.block[position];
+            try!(self.emit_lit(lit));
+            position += 1;
         }
+
+        self.block.truncate(0);
+        try!(self.emit_flush());
+
         Ok(())
     }
     
@@ -105,18 +103,20 @@ impl<W: Write> Write for Writer<W> {
     fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
         let mut written = 0;
         while buf.len() > 0 {
-            let sz = ::std::cmp::min(MAX_BLOCK_SIZE - self.block.len(), buf.len());
+            let sz = ::std::cmp::min(BLOCK_SIZE - self.block.len(), buf.len());
             let src = &buf[0..sz];
             buf = &buf[sz..];
             self.block.extend_from_slice(src);
             written += sz;
-            try!(self.process_block(false));
+            if self.block.len() >= BLOCK_SIZE {
+                try!(self.process_block());
+            }
         }
         Ok(written)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        try!(self.process_block(true));
+        try!(self.process_block());
         self.inner.flush()
     }
 }
@@ -136,7 +136,7 @@ impl<R: Read> Reader<R> {
     pub fn new(inner: R) -> Reader<R> {
         Reader {
             inner: inner,
-            block: Vec::with_capacity(MIN_BLOCK_SIZE),
+            block: Vec::with_capacity(BLOCK_SIZE),
             in_block: false,
             position: 0,
             block_length: 0,
