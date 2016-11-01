@@ -342,7 +342,7 @@ mod tests {
     fn compress_aaa() {
         let mut cw = CompressWriter::new(vec![]);
         let input = b"aaaaaaaaa";
-        let expected = [128u8, 97, 81, 0];
+        let expected = [128u8, 97, 97, 0];
         
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn decompress_aaa() {
-        let compressed = [128u8, 97, 81, 0];
+        let compressed = [128u8, 97, 97, 0];
         let mut cr = DecompressReader::new(Cursor::new(compressed));
         let expected = b"aaaaaaaaa";
         
