@@ -1,11 +1,12 @@
 // Copyright 2016 Martin Grabmueller. See the LICENSE file at the
 // top-level directory of this distribution for license information.
 
-//! Simple implementation of a Huffman encoder.  This is a block
-//! encoder that groups incoming data in 64 KiB blocks and generates
-//! Huffman codes for each block independently.  The information for
-//! reconstructing the Huffman tree in the decoder is encoded at the
-//! start of each block.
+//! Simple implementation of a Huffman encoder.
+//!
+//! This is a block encoder that groups incoming data in 64 KiB blocks
+//! and generates Huffman codes for each block independently.  The
+//! information for reconstructing the Huffman tree in the decoder is
+//! encoded at the start of each block.
 //!
 //! Based on the static Huffman encoder in Mark Nelson, Jean-Loup
 //! Gailly: The Data Compression Book, 2nd Edition, M&T Books, 1996.

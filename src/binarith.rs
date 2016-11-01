@@ -3,6 +3,11 @@
 
 //! Binary arithmetic encoder.
 //!
+//! This module exports both a general encoder that can be used to
+//! emit bits with custom probabilities, and a Writer/Reader
+//! combination that is an order-16 adaptive compressor/decompressor
+//! for bits.
+//!
 //! This is an implentation of Moffat et al.'s binary arithmetic
 //! encoder as presented in: Alistair Moffat, Radford M. Neal and Ian
 //! H. Witten: Arithmetic Coding Revisited, ACM Transactions on
