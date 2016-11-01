@@ -1,7 +1,11 @@
 // Copyright 2016 Martin Grabmueller. See the LICENSE file at the
 // top-level directory of this distribution for license information.
 
-//! Simple implementation of a Huffman encoder.
+//! Simple implementation of a Huffman encoder.  This is a block
+//! encoder that groups incoming data in 64 KiB blocks and generates
+//! Huffman codes for each block independently.  The information for
+//! reconstructing the Huffman tree in the decoder is encoded at the
+//! start of each block.
 //!
 //! Based on the static Huffman encoder in Mark Nelson, Jean-Loup
 //! Gailly: The Data Compression Book, 2nd Edition, M&T Books, 1996.
@@ -28,7 +32,7 @@ struct Node {
     active: bool,
 }
 
-pub struct CompressWriter<W> {
+pub struct Writer<W> {
     inner: BitWriter<W>,
     block: [u8; BLOCK_SIZE],
     fill:  usize,
@@ -37,9 +41,9 @@ pub struct CompressWriter<W> {
     codes: [(u64, usize); EOF + 1],
 }
 
-impl<W: Write> CompressWriter<W> {
-    pub fn new(inner: W) -> CompressWriter<W>{
-        CompressWriter {
+impl<W: Write> Writer<W> {
+    pub fn new(inner: W) -> Self {
+        Writer {
             inner: BitWriter::new(inner),
             block: [0; BLOCK_SIZE],
             fill:  0,
@@ -274,7 +278,7 @@ impl<W: Write> CompressWriter<W> {
     }
 }
 
-impl<W: Write> Write for CompressWriter<W> {
+impl<W: Write> Write for Writer<W> {
     fn write(&mut self, input: &[u8]) -> io::Result<usize> {
         self.process(input)
     }
@@ -288,7 +292,7 @@ impl<W: Write> Write for CompressWriter<W> {
     }
 }
 
-pub struct DecompressReader<R> {
+pub struct Reader<R> {
     inner: BitReader<R>,
     freqs: [usize; EOF + 1],
     tree:  [Node; 2 * (EOF + 1) + 1],
@@ -297,9 +301,9 @@ pub struct DecompressReader<R> {
     eof: bool,
 }
 
-impl<R: Read> DecompressReader<R> {
-    pub fn new(inner: R) -> DecompressReader<R> {
-        DecompressReader {
+impl<R: Read> Reader<R> {
+    pub fn new(inner: R) -> Reader<R> {
+        Reader {
             inner: BitReader::new(inner),
             freqs: [0; EOF + 1],
             tree: [Node{weight: 0, child0: 0, child1: 0, parent: 0, active: false};
@@ -449,21 +453,21 @@ impl<R: Read> DecompressReader<R> {
     }
 }
 
-impl<R: Read> Read for DecompressReader<R> {
+impl<R: Read> Read for Reader<R> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         self.process(output)
     }
 }
 
 pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> {
-    let mut cw = CompressWriter::new(output);
+    let mut cw = Writer::new(output);
     try!(io::copy(&mut input, &mut cw));
     try!(cw.flush());
     Ok(cw.to_inner())
 }
 
 pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error> {
-    let mut cr = DecompressReader::new(input);
+    let mut cr = Reader::new(input);
     try!(io::copy(&mut cr, &mut output));
     Ok(output)
 }
@@ -472,12 +476,12 @@ pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error
 #[cfg(test)]
 mod test {
     use ::std::io::{Cursor, Write, Read};
-    use super::{CompressWriter, DecompressReader};
+    use super::{Writer, Reader};
     
     #[test]
     fn compress_empty() {
         let input = b"";
-        let mut cw = CompressWriter::new(vec![]);
+        let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.to_inner();
@@ -488,7 +492,7 @@ mod test {
     #[test]
     fn compress_a() {
         let input = b"a";
-        let mut cw = CompressWriter::new(vec![]);
+        let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.to_inner();
@@ -499,7 +503,7 @@ mod test {
     #[test]
     fn compress_aaa() {
         let input = b"aaaaaaaaa";
-        let mut cw = CompressWriter::new(vec![]);
+        let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.to_inner();
@@ -524,7 +528,7 @@ mod test {
                       rebum. Stet clita kasd gubergren, no sea \
                       takimata sanctus est Lorem ipsum dolor sit \
                       amet.";
-        let mut cw = CompressWriter::new(vec![]);
+        let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.to_inner();
@@ -561,7 +565,7 @@ mod test {
     #[test]
     fn decompress_empty() {
         let input = [255, 255, 0, 0, 0, 128];
-        let mut cr = DecompressReader::new(Cursor::new(input));
+        let mut cr = Reader::new(Cursor::new(input));
         let mut decompressed = Vec::new();
         let _ = cr.read_to_end(&mut decompressed).unwrap();
         let expected = b"";
@@ -571,7 +575,7 @@ mod test {
     #[test]
     fn decompress_a() {
         let input = [97, 97, 0, 1, 0, 128];
-        let mut cr = DecompressReader::new(Cursor::new(input));
+        let mut cr = Reader::new(Cursor::new(input));
         let mut decompressed = Vec::new();
         let _ = cr.read_to_end(&mut decompressed).unwrap();
         let expected = b"a";
@@ -581,7 +585,7 @@ mod test {
     #[test]
     fn decompress_aaa() {
         let input = [97, 97, 0, 9, 0, 255, 160];
-        let mut cr = DecompressReader::new(Cursor::new(input));
+        let mut cr = Reader::new(Cursor::new(input));
         let mut decompressed = Vec::new();
         let _ = cr.read_to_end(&mut decompressed).unwrap();
         let expected = b"aaaaaaaaa";
@@ -617,7 +621,7 @@ mod test {
              30, 223, 121, 112, 93, 212, 202, 25, 214, 19, 115, 206, 188, 11,
              251, 111, 13, 111, 111, 197, 207, 29, 72, 226, 55, 231, 211, 5,
              231, 132, 34, 242, 169, 83, 120, 61, 246, 163, 114, 103, 64];
-        let mut cr = DecompressReader::new(Cursor::new(&input[..]));
+        let mut cr = Reader::new(Cursor::new(&input[..]));
         let mut decompressed = Vec::new();
         let _ = cr.read_to_end(&mut decompressed).unwrap();
         let expected = b"Lorem ipsum dolor sit amet, consetetur \
@@ -641,12 +645,12 @@ mod test {
     #[test]
     fn compress_decompress() {
         let input = include_bytes!("huff.rs");
-        let mut cw = CompressWriter::new(vec![]);
+        let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.to_inner();
         
-        let mut cr = DecompressReader::new(Cursor::new(&compressed[..]));
+        let mut cr = Reader::new(Cursor::new(&compressed[..]));
         let mut decompressed = Vec::new();
         let _ = cr.read_to_end(&mut decompressed).unwrap();
         
