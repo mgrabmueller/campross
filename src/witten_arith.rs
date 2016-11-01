@@ -13,14 +13,17 @@ use std::io;
 
 use error::Error;
 
-const CODE_VALUE_BITS: usize = 16;
-//const CODE_VALUE_BITS: usize = 32;
+// You can uncomment the following line and comment the line after to
+// try out compression with a smaller word size.  The difference will
+// be negligable (less than 0.01% on my experiments.
+//const CODE_VALUE_BITS: usize = 16;
+const CODE_VALUE_BITS: usize = 32;
 
-type CodeValue = u32;
+type CodeValue = u64;
 
-const TOP_VALUE: CodeValue = ((1u64 << CODE_VALUE_BITS) - 1) as CodeValue;
+const TOP_VALUE: CodeValue = (1u64 << CODE_VALUE_BITS) - 1;
 
-const FIRST_QTR: CodeValue = TOP_VALUE / 4 + 1;
+const FIRST_QTR: CodeValue = (TOP_VALUE / 4) + 1;
 const HALF: CodeValue = 2 * FIRST_QTR;
 const THIRD_QTR: CodeValue = 3 * FIRST_QTR;
 
@@ -29,9 +32,10 @@ const NO_OF_CHARS: usize = 256;
 const EOF_SYMBOL: usize = NO_OF_CHARS + 1;
 const NO_OF_SYMBOLS: usize = EOF_SYMBOL + 1;
 
-//const MAX_FREQUENCY: usize = 16383;
+// Using a max frequency of 2^14 - 1 actually gives better compression
+// than bigger values like 2^30 - 1.  I suppose this is due to better
+// locality.
 const MAX_FREQUENCY: usize = (1 << 14) - 1;
-//const MAX_FREQUENCY: usize = (1 << 30) - 1;
 
 type Symbol = usize;
 
@@ -64,9 +68,7 @@ impl Model {
     }
 
     fn update(&mut self, symbol: Symbol) {
-        println!("updating model");
         if self.cum_freq[0] == MAX_FREQUENCY {
-            println!("rescaling");
             let mut cum = 0;
             let mut i = NO_OF_SYMBOLS;
             while i > 0 {
@@ -77,7 +79,6 @@ impl Model {
             }
             self.freq[0] = (self.freq[0] + 1) / 2;
             self.cum_freq[0] = cum;
-            println!("rescaling done: {:?}", &self.cum_freq[..]);
         }
 
         let mut i = symbol;
@@ -101,6 +102,7 @@ impl Model {
 
 }
 
+/// Arithmetic encoder.
 struct Encoder<W> {
     inner: W,
 
@@ -132,24 +134,18 @@ impl<W: Write> Encoder<W> {
     }
 
     fn encode_symbol(&mut self, symbol: Symbol) -> io::Result<()> {
-        let range = ((self.high - self.low) as u64) + 1;
-        let total = self.model.cum_freq[0] as u64;
+        let range = (self.high - self.low) + 1;
+        let total = self.model.cum_freq[0] as CodeValue;
 
-        println!("S {:8x} {:8x}", self.low, self.high);
-        self.high = self.low + (((range*(self.model.cum_freq[symbol-1] as u64))/total) - 1) as CodeValue;
-        self.low = self.low + ((range*(self.model.cum_freq[symbol] as u64))/total) as CodeValue;
+        debug_assert!(total <= MAX_FREQUENCY as CodeValue);
 
-        println!("0 {:8x} {:8x} {} {}", self.low, self.high, range*self.model.cum_freq[symbol-1] as u64, total);
+        let hi_freq = self.model.cum_freq[symbol-1] as CodeValue;
+        let lo_freq = self.model.cum_freq[symbol] as CodeValue;
+
+        self.high = self.low + (range * hi_freq) / total - 1;
+        self.low = self.low + (range * lo_freq) / total;
+
         loop {
-            if self.high == 0 {
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "high = 0"));
-            }
-            if self.low > self.high {
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "low > high"));
-            }
-            if self.low == self.high {
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "low = high"));
-            }
             if self.high < HALF {
                 try!(self.bit_plus_follow(0));
             } else if self.low >= HALF {
@@ -163,12 +159,10 @@ impl<W: Write> Encoder<W> {
             } else {
                 break;
             }
-            println!("1 {:8x} {:8x}", self.low, self.high);
-            self.low <<= 1;
-            self.high <<= 1;
-            println!("2 {:8x} {:8x}", self.low, self.high);
+            self.low = self.low << 1;
+            self.high = (self.high << 1) + 1;
         }
-        
+
         Ok(())
     }
 
@@ -218,12 +212,7 @@ impl<W: Write> Encoder<W> {
 
 impl<W: Write> Write for Encoder<W> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        let mut i = 0;
         for b in data {
-            if i % 1000 == 0 {
-                println!("writing...");
-            }
-            i += 1;
             let symbol = self.model.char_to_index[*b as usize];
             try!(self.encode_symbol(symbol));
             self.model.update(symbol);
@@ -238,6 +227,7 @@ impl<W: Write> Write for Encoder<W> {
     }
 }
 
+/// Arithmetic decoder.
 struct Decoder<R> {
     inner: Bytes<R>,
 
@@ -300,16 +290,22 @@ impl<R: Read> Decoder<R> {
     
     fn decode_symbol(&mut self) -> io::Result<Symbol> {
 
-        let range = (self.high - self.low) as u64 + 1;
-        let total = self.model.cum_freq[0] as u64;
-        let cum = (((self.value as u64 - self.low as u64) + 1) * total - 1) / range;
+        let range = self.high - self.low + 1;
+        let total = self.model.cum_freq[0] as CodeValue;
+        let cum = ((self.value - self.low + 1) * total - 1) / range;
+
+        // Find symbol with the cumulative frequency that matches the
+        // current interval.
         let mut symbol = 1;
-        while self.model.cum_freq[symbol] as u64 > cum {
+        while self.model.cum_freq[symbol] as CodeValue > cum {
             symbol += 1;
         }
 
-        self.high = self.low + (((range * self.model.cum_freq[symbol - 1] as u64) / total) as CodeValue) - 1;
-        self.low = self.low + (((range * self.model.cum_freq[symbol] as u64) / total) as CodeValue);
+        let lo_freq = self.model.cum_freq[symbol] as CodeValue;
+        let hi_freq = self.model.cum_freq[symbol - 1] as CodeValue;
+        
+        self.high = self.low + (range * hi_freq / total) - 1;
+        self.low = self.low + (range * lo_freq / total);
 
         loop {
             if self.high < HALF {
@@ -325,8 +321,8 @@ impl<R: Read> Decoder<R> {
             } else {
                 break;
             }
-            self.low <<= 1;
-            self.high <<= 1;
+            self.low = self.low << 1;
+            self.high = (self.high << 1) + 1;
             self.value = (self.value << 1) + (try!(self.input_bit()) as CodeValue);
         }
         Ok(symbol)
@@ -355,6 +351,8 @@ impl<R: Read> Read for Decoder<R> {
     }
 }
 
+/// Read all data from `input`, compress it using an order-0
+/// arithmetic encoder and write the compressed data to `output`.
 pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> {
     let mut cw = Encoder::new(output);
     try!(io::copy(&mut input, &mut cw));
@@ -362,6 +360,9 @@ pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> 
     Ok(cw.into_inner())
 }
 
+/// Read all data from `input`, decompress it using an order-0
+/// arithmetic encoder and write the decompressed data to `output`.
+/// The data must be produced by the `compress` function.
 pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error> {
     let mut cr = try!(Decoder::new(input));
     try!(io::copy(&mut cr, &mut output));
@@ -409,13 +410,13 @@ mod test {
     fn compress_aaa() {
         let input = b"aaaaaaaaa";
         let compressed = compress(Cursor::new(&input), vec![]).unwrap();
-        let expected = [249, 125, 255, 255, 255, 255, 223, 105];
+        let expected = [249, 253, 255, 255, 255, 255, 223, 126];
         assert_eq!(&expected[..], &compressed[..]);
     }
 
     #[test]
     fn decompress_aaa() {
-        let input = [249, 125, 255, 255, 255, 255, 223, 105];
+        let input = [249, 253, 255, 255, 255, 255, 223, 126];
         let decompressed = decompress(Cursor::new(&input), vec![]).unwrap();
         let expected = b"aaaaaaaaa";
         assert_eq!(&expected[..], &decompressed[..]);

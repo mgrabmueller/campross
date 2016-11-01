@@ -15,8 +15,12 @@ type Symbol = u16;
 const EOF:  Symbol = 256;
 const SYM_CNT: usize = (EOF + 1) as usize;
 
-// From https://sachingarg.com/compression/entropy_coding/64bit/
-const MAX_FREQ: u64      = 0x3fff_ffff;
+// https://sachingarg.com/compression/entropy_coding/64bit/ says we
+// can use up to 0x3fff_ffff as the maximum frequency on 64 bit
+// machines.  That's true, but it turns out that compression is much
+// better with smaller numbers such a 0x3fff, probably due to better
+// locality.
+const MAX_FREQ: u64      = 0x3fff;
 
 const ONE_HALF: u64      = 0x8000_0000;
 const ONE_FOURTH: u64    = 0x4000_0000;
