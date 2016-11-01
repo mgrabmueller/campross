@@ -14,6 +14,7 @@ use getopts::Options;
 use mktemp::Temp;
 
 use campross::arith;
+use campross::witten_arith;
 use campross::lzw;
 use campross::lz77;
 use campross::lzmg2;
@@ -24,6 +25,7 @@ use campross::binarith;
 #[derive(Debug)]
 enum Method {
     Arith,
+    WittenArith,
     Lzw,
     Lz77,
     Lzmg2,
@@ -41,6 +43,9 @@ fn do_compress(input: &str, output: &str, method: Method, stats: bool) {
             Method::Arith => {
                 let enc = arith::Encoder::new();
                 enc.compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+            },
+            Method::WittenArith => {
+                witten_arith::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
             },
             Method::Lzw => {
                 lzw::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
@@ -84,6 +89,9 @@ fn do_decompress(input: &str, output: &str, method: Method, _stats: bool) {
             let enc = arith::Decoder::new();
             enc.decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
+        Method::WittenArith => {
+            witten_arith::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+        },
         Method::Lzw => {
             lzw::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
         },
@@ -112,6 +120,9 @@ fn do_inspect(input: &str, method: Method) {
     match method {
         Method::Arith => {
             println!("inspect mode not supported for arithmetic encoder");
+        },
+        Method::WittenArith => {
+            println!("inspect mode not supported for Witten arithmetic encoder");
         },
         Method::Lzw => {
             lzw::inspect(BufReader::new(inf)).unwrap();
@@ -170,6 +181,9 @@ fn do_test(input: &str, method: Method) {
                     let enc = arith::Encoder::new();
                     enc.compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
+                Method::WittenArith => {
+                    witten_arith::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                },
                 Method::Lzw => {
                     lzw::compress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
@@ -214,6 +228,9 @@ fn do_test(input: &str, method: Method) {
                 Method::Arith => {
                     let enc = arith::Decoder::new();
                     enc.decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
+                },
+                Method::WittenArith => {
+                    witten_arith::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
                 },
                 Method::Lzw => {
                     lzw::decompress(BufReader::new(inf), BufWriter::new(outf)).unwrap()
@@ -298,7 +315,7 @@ pub fn main() {
     opts.optflag("d", "decompress", "decompress the input file");
     opts.optflag("x", "examine", "examine a compressed file");
     opts.optflag("t", "test", "test compressor on a file");
-    opts.optopt("m", "method", "select compression method", "arith|lzw|lz77|lzmg2|huff|lzp|binarith");
+    opts.optopt("m", "method", "select compression method", "arith|warith|lzw|lz77|lzmg2|huff|lzp|binarith");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
 
@@ -311,6 +328,7 @@ pub fn main() {
                 if let Some(s) = matches.opt_str("m") {
                     match &s[..] {
                         "arith" => Some(Method::Arith),
+                        "warith" => Some(Method::WittenArith),
                         "lzw"   => Some(Method::Lzw),
                         "lz77"   => Some(Method::Lz77),
                         "lzmg2"  => Some(Method::Lzmg2),

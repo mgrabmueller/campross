@@ -12,3 +12,4 @@ pub mod lzmg2;
 pub mod huff;
 pub mod lzp;
 pub mod binarith;
+pub mod witten_arith;
