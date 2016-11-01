@@ -394,13 +394,13 @@ mod test {
     fn compress_a() {
         let input = b"a";
         let compressed = compress(Cursor::new(&input), vec![]).unwrap();
-        let expected = [121, 195, 0];
+        let expected = [121, 195, 1];
         assert_eq!(&expected[..], &compressed[..]);
     }
 
     #[test]
     fn decompress_a() {
-        let input = [121, 195, 0];
+        let input = [121, 195, 1];
         let decompressed = decompress(Cursor::new(&input), vec![]).unwrap();
         let expected = b"a";
         assert_eq!(&expected[..], &decompressed[..]);
@@ -410,13 +410,13 @@ mod test {
     fn compress_aaa() {
         let input = b"aaaaaaaaa";
         let compressed = compress(Cursor::new(&input), vec![]).unwrap();
-        let expected = [249, 253, 255, 255, 255, 255, 223, 126];
+        let expected = [249, 3, 254, 0, 255, 255, 223, 97];
         assert_eq!(&expected[..], &compressed[..]);
     }
 
     #[test]
     fn decompress_aaa() {
-        let input = [249, 253, 255, 255, 255, 255, 223, 126];
+        let input = [249, 3, 254, 0, 255, 255, 223, 97];
         let decompressed = decompress(Cursor::new(&input), vec![]).unwrap();
         let expected = b"aaaaaaaaa";
         assert_eq!(&expected[..], &decompressed[..]);
