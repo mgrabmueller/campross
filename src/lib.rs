@@ -6,6 +6,7 @@ pub mod bitfile;
 pub mod window;
 
 pub mod lz77;
+pub mod lzss;
 pub mod arith;
 pub mod lzw;
 pub mod lzmg2;

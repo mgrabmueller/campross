@@ -12,7 +12,7 @@ use window::SlidingWindow;
 const LENGTH_BITS: usize = 4;
 const OFFSET_BITS: usize = 12;
 
-const MIN_MATCH: usize = 3;
+const MIN_MATCH: usize = 2;
 const MAX_LENGTH: usize = ((1 << LENGTH_BITS) - 1) + MIN_MATCH;
 
 const WINDOW_SIZE: usize = 1 << OFFSET_BITS;
