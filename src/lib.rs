@@ -3,13 +3,11 @@
 
 pub mod error;
 pub mod bitfile;
-pub mod window;
 
 pub mod lz77;
 pub mod lzss;
 pub mod arith;
 pub mod lzw;
-pub mod lzmg2;
 pub mod huff;
 pub mod lzp;
 pub mod binarith;

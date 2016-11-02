@@ -26,9 +26,6 @@ pub struct Writer<W> {
     hashtab: [usize; HASHTAB_SIZE],
     position: usize,
     look_ahead_bytes: usize,
-
-    biggest_len: usize,
-    biggest_ofs: usize,
 }
 
 #[inline(always)]
@@ -45,8 +42,6 @@ impl<W: Write> Writer<W> {
             hashtab: [0; HASHTAB_SIZE],
             position: 0,
             look_ahead_bytes: 0,
-            biggest_len: 0,
-            biggest_ofs: 0,
         }
     }
 
@@ -96,14 +91,7 @@ impl<W: Write> Writer<W> {
         if ofs < WINDOW_SIZE - MAX_MATCH_LEN && match_len >= MIN_MATCH_LEN {
             let follow = self.window[mod_window(self.position + match_len)];
 
-            if match_len > self.biggest_len {
-                self.biggest_len = match_len;
-            }
-            if ofs > self.biggest_ofs {
-                self.biggest_ofs = ofs;
-            }
             assert!(ofs != 0);
-            assert!(ofs < WINDOW_SIZE - MAX_MATCH_LEN);
             assert!((match_len - MIN_MATCH_LEN) < 16);
             
             let m1 = (((match_len - MIN_MATCH_LEN) as u8) << 4) | (((ofs >> 8) as u8) & 0x0f);
@@ -148,7 +136,6 @@ impl<W: Write> Write for Writer<W> {
         while self.look_ahead_bytes > 0 {
             try!(self.process());
         }
-        println!("biggest len={}, ofs={}", self.biggest_len, self.biggest_ofs);
         self.inner.flush()
     }
 }
