@@ -147,7 +147,8 @@ impl<W: Write> Write for BitWriter<W> {
     /// written data to be compressed and written to the underlying
     /// Writer, which is also flushed.
     fn flush(&mut self) -> io::Result<()> {
-        self.do_flush()
+        try!(self.do_flush());
+        self.inner.flush()
     }
 }
 

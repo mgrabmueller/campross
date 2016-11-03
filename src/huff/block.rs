@@ -645,7 +645,7 @@ mod test {
 
     #[test]
     fn compress_decompress() {
-        let input = include_bytes!("huff.rs");
+        let input = include_bytes!("block.rs");
         let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
