@@ -76,12 +76,12 @@ fn do_test(input: &str, method: Method) {
     };
     let start_compress = Instant::now();
     let (orig_size, compressed_size) =
-        decompress_with(input, compressed_name.to_str().unwrap(), method);
+        compress_with(input, compressed_name.to_str().unwrap(), method);
     let compress_duration = start_compress.elapsed();
 
     let decompress_start = Instant::now();
     let (compressed_size2, decompressed_size) =
-        decompress_with(input, compressed_name.to_str().unwrap(), method);
+        decompress_with(compressed_name.to_str().unwrap(), decompressed_name.to_str().unwrap(), method);
     let decompress_duration = decompress_start.elapsed();
     
     let decompressed_hash = {
