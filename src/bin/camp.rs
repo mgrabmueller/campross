@@ -144,7 +144,7 @@ fn compress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
                 lzss::compress(inf, outf).unwrap()
             },
             Method::Huff => {
-                huff::compress(inf, outf).unwrap()
+                huff::block::compress(inf, outf).unwrap()
             },
             Method::Lzp => {
                 lzp::compress(inf, outf).unwrap()
@@ -187,7 +187,7 @@ fn decompress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
                 lzss::decompress(inf, outf).unwrap()
             },
             Method::Huff => {
-                huff::decompress(inf, outf).unwrap()
+                huff::block::decompress(inf, outf).unwrap()
             },
             Method::Lzp => {
                 lzp::decompress(inf, outf).unwrap()
