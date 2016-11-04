@@ -473,7 +473,6 @@ pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error
     Ok(output)
 }
 
-
 #[cfg(test)]
 mod test {
     use ::std::io::{Cursor, Write, Read};

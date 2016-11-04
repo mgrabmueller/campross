@@ -8,6 +8,7 @@ use std::io;
 use std::io::{Read, Write};
 
 use bitfile::{BitReader, BitWriter};
+use error::Error;
 
 type Symbol = usize;
 
@@ -72,6 +73,32 @@ impl Tree {
         tree
     }
 
+    // fn dump_tree(&self, node: usize, nesting: usize) {
+    //     for _ in 0..nesting*2 {
+    //         print!(" ");
+    //     }
+    //     if self.nodes[node].child_is_leaf {
+    //         if self.nodes[node].child < 256 {
+    //             println!("n{} {:?} w:{} p:{:?}", node, (self.nodes[node].child as u8) as char, self.nodes[node].weight, self.nodes[node].parent);
+    //         } else {
+    //             println!("n{} {} w:{} p:{:?}", node, self.nodes[node].child, self.nodes[node].weight, self.nodes[node].parent);
+    //         }
+    //     } else {
+    //         println!("n{} w:{} p:{:?}", node, self.nodes[node].weight, self.nodes[node].parent);
+    //         self.dump_tree(self.nodes[node].child, nesting + 1);
+    //         self.dump_tree(self.nodes[node].child + 1, nesting + 1);
+    //     }
+    // }
+    
+    // fn dump(&self) {
+    //     self.dump_tree(ROOT_NODE, 1);
+    //     for i in 0..ESCAPE + 1 {
+    //         if let Some(idx) = self.leaf[i] {
+    //             println!(" {:?} ({:?}) -> {}", i, (i as u8) as char, idx);
+    //         }
+    //     }
+    // }
+    
     fn add_new_node(&mut self, sym: Symbol) {
         let lightest_node = self.next_free_node - 1;
         let new_node = self.next_free_node;
@@ -89,6 +116,7 @@ impl Tree {
         self.nodes[zero_weight_node].child_is_leaf = true;
         self.nodes[zero_weight_node].weight = 0;
         self.nodes[zero_weight_node].parent = Some(lightest_node);
+        self.leaf[sym] = Some(zero_weight_node);
     }
 
     fn update_model(&mut self, sym: Symbol) {
@@ -100,7 +128,7 @@ impl Tree {
             self.nodes[current_node].weight += 1;
             let mut new_node = current_node;
             while new_node > ROOT_NODE {
-                if self.nodes[new_node - 1].weight > self.nodes[current_node].weight {
+                if self.nodes[new_node - 1].weight >= self.nodes[current_node].weight {
                     break;
                 }
                 new_node -= 1;
@@ -143,17 +171,20 @@ impl Tree {
 
         j = self.next_free_node - 1;
         i = j;
-        while i > ROOT_NODE {
+        loop {
             if self.nodes[i].child_is_leaf {
                 self.nodes[j] = self.nodes[i];
                 self.nodes[j].weight = (self.nodes[j].weight + 1) / 2;
                 j -= 1;
             }
+            if i == ROOT_NODE {
+                break;
+            }
             i -= 1;
         }
 
         i = self.next_free_node - 2;
-        while j >= ROOT_NODE {
+        loop {
             k = i + 1;
             self.nodes[j].weight = self.nodes[i].weight +
                 self.nodes[k].weight;
@@ -165,18 +196,21 @@ impl Tree {
             }
             k -= 1;
             for x in 0..k-j {
-                self.nodes[j + x + 1] = self.nodes[j + x];
+                self.nodes[j + x] = self.nodes[j + x + 1];
             }
             self.nodes[k].weight = weight;
             self.nodes[k].child = i;
-            self.nodes[j].child_is_leaf = false;
+            self.nodes[k].child_is_leaf = false;
 
+            if j == ROOT_NODE {
+                break;
+            }
             i -= 2;
             j -= 1;
         }
 
         i = self.next_free_node - 1;
-        while i >= ROOT_NODE {
+        loop {
             if self.nodes[i].child_is_leaf {
                 k = self.nodes[i].child;
                 self.leaf[k] = Some(i);
@@ -184,6 +218,9 @@ impl Tree {
                 k = self.nodes[i].child;
                 self.nodes[k].parent = Some(i);
                 self.nodes[k + 1].parent = Some(i);
+            }
+            if i == ROOT_NODE {
+                break;
             }
             i -= 1;
         }
@@ -275,7 +312,6 @@ impl<W: Write> Write for Writer<W> {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         for b in buffer {
             let sym = *b as Symbol;
-            println!("encoding {}", sym);
             try!(self.encode_symbol(sym));
             self.tree.update_model(sym);
         }
@@ -283,7 +319,6 @@ impl<W: Write> Write for Writer<W> {
     }
     
     fn flush(&mut self) -> io::Result<()> {
-        println!("encoding {}", EOF);
         try!(self.encode_symbol(EOF));
         self.inner.flush()
     }
@@ -298,7 +333,6 @@ impl<R: Read> Read for Reader<R> {
         let mut written = 0;
         for p in buffer.iter_mut() {
             let s = try!(self.decode_symbol());
-            println!("decoded: {}", s);
             if s == EOF {
                 self.eof = true;
                 break;
@@ -310,6 +344,20 @@ impl<R: Read> Read for Reader<R> {
         Ok(written)
     }
 }
+
+pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> {
+    let mut cw = Writer::new(output);
+    try!(io::copy(&mut input, &mut cw));
+    try!(cw.flush());
+    Ok(cw.into_inner())
+}
+
+pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error> {
+    let mut cr = Reader::new(input);
+    try!(io::copy(&mut cr, &mut output));
+    Ok(output)
+}
+
 
 #[cfg(test)]
 mod test {
@@ -344,13 +392,13 @@ mod test {
         e.write_all(input).unwrap();
         e.flush().unwrap();
         let compressed = e.into_inner();
-        let expected = vec![176, 128];
+        let expected = vec![176, 192];
         assert_eq!(expected, compressed);
     }
 
     #[test]
     fn decompress_a() {
-        let input = vec![176, 128];
+        let input = vec![176, 192];
         let mut e = Reader::new(Cursor::new(input));
         let mut decompressed = Vec::new();
         e.read_to_end(&mut decompressed).unwrap();
@@ -365,13 +413,13 @@ mod test {
         e.write_all(input).unwrap();
         e.flush().unwrap();
         let compressed = e.into_inner();
-        let expected = vec![176, 204, 32, 48];
+        let expected = vec![176, 176, 48];
         assert_eq!(expected, compressed);
     }
 
     #[test]
     fn decompress_aaa() {
-        let input = vec![176, 204, 32, 48];
+        let input = vec![176, 176, 48];
         let mut e = Reader::new(Cursor::new(input));
         let mut decompressed = Vec::new();
         e.read_to_end(&mut decompressed).unwrap();
@@ -386,7 +434,7 @@ mod test {
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
         let compressed = cw.into_inner();
-        
+
         let mut cr = Reader::new(Cursor::new(&compressed[..]));
         let mut decompressed = Vec::new();
         let _ = cr.read_to_end(&mut decompressed).unwrap();

@@ -30,6 +30,7 @@ pub enum Method {
     Lz77,
     Lzss,
     Huff,
+    AHuff,
     Lzp,
     BinArith,
 }
@@ -146,6 +147,9 @@ fn compress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
             Method::Huff => {
                 huff::block::compress(inf, outf).unwrap()
             },
+            Method::AHuff => {
+                huff::adaptive::compress(inf, outf).unwrap()
+            },
             Method::Lzp => {
                 lzp::compress(inf, outf).unwrap()
             },
@@ -188,6 +192,9 @@ fn decompress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
             },
             Method::Huff => {
                 huff::block::decompress(inf, outf).unwrap()
+            },
+            Method::AHuff => {
+                huff::adaptive::decompress(inf, outf).unwrap()
             },
             Method::Lzp => {
                 lzp::decompress(inf, outf).unwrap()
@@ -249,7 +256,7 @@ fn do_compare(input: &str) {
 
     let mut results: Vec<Result> = Vec::new();
     for method in [Arith, BinArith, WittenArith, Lzw, Lz77, Lzss, Lzp,
-                   Huff].iter() {
+                   Huff, AHuff].iter() {
         let start_compress = Instant::now();
         let (orig_size, compressed_size) =
             compress_with(input, compressed_name.to_str().unwrap(), *method);
@@ -340,7 +347,7 @@ pub fn main() {
     opts.optflag("d", "decompress", "decompress the input file");
     opts.optflag("t", "test", "test compressor on a file");
     opts.optflag("p", "compare", "compare all compressors on a file");
-    opts.optopt("m", "method", "select compression method", "arith|warith|lzw|lz77|lzss|lzmg2|huff|lzp|binarith");
+    opts.optopt("m", "method", "select compression method", "arith|warith|lzw|lz77|lzss|lzmg2|huff|ahuff|lzp|binarith");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
 
@@ -358,6 +365,7 @@ pub fn main() {
                         "lz77"   => Some(Method::Lz77),
                         "lzss"   => Some(Method::Lzss),
                         "huff"  => Some(Method::Huff),
+                        "ahuff"  => Some(Method::AHuff),
                         "lzp"  => Some(Method::Lzp),
                         "binarith"  => Some(Method::BinArith),
                         _       => None,
