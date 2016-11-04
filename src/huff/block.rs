@@ -274,7 +274,7 @@ impl<W: Write> Writer<W> {
         Ok(input_ptr)
     }
 
-    pub fn to_inner(self) -> W {
+    pub fn into_inner(self) -> W {
         self.inner.to_inner()
     }
 }
@@ -464,7 +464,7 @@ pub fn compress<R: Read, W: Write>(mut input: R, output: W) -> Result<W, Error> 
     let mut cw = Writer::new(output);
     try!(io::copy(&mut input, &mut cw));
     try!(cw.flush());
-    Ok(cw.to_inner())
+    Ok(cw.into_inner())
 }
 
 pub fn decompress<R: Read, W: Write>(input: R, mut output: W) -> Result<W, Error> {
@@ -484,7 +484,7 @@ mod test {
         let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
-        let compressed = cw.to_inner();
+        let compressed = cw.into_inner();
         let expected = [255, 255, 0, 0, 0, 128];
         assert_eq!(&expected[..], &compressed[..]);
     }
@@ -495,7 +495,7 @@ mod test {
         let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
-        let compressed = cw.to_inner();
+        let compressed = cw.into_inner();
         let expected = [97, 97, 0, 1, 0, 128];
         assert_eq!(&expected[..], &compressed[..]);
     }
@@ -506,7 +506,7 @@ mod test {
         let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
-        let compressed = cw.to_inner();
+        let compressed = cw.into_inner();
         let expected = [97, 97, 0, 9, 0, 255, 160];
         assert_eq!(&expected[..], &compressed[..]);
     }
@@ -531,7 +531,7 @@ mod test {
         let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
-        let compressed = cw.to_inner();
+        let compressed = cw.into_inner();
         let expected =
             [32, 32, 0, 99, 44, 46, 0, 8, 0, 0, 0, 6, 65, 65, 0, 2, 76, 76, 0,
              4, 83, 83, 0, 2, 97, 121, 0, 44, 0, 6, 0, 12, 0, 26, 0, 56, 0, 0,
@@ -648,7 +648,7 @@ mod test {
         let mut cw = Writer::new(vec![]);
         cw.write(&input[..]).unwrap();
         cw.flush().unwrap();
-        let compressed = cw.to_inner();
+        let compressed = cw.into_inner();
         
         let mut cr = Reader::new(Cursor::new(&compressed[..]));
         let mut decompressed = Vec::new();

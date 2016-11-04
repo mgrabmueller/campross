@@ -19,7 +19,8 @@ use campross::lzw;
 use campross::lz77;
 use campross::lzss;
 use campross::huff;
-use campross::lzp;
+use campross::lzp1;
+use campross::lzp2;
 use campross::binarith;
 
 #[derive(Debug,Clone,Copy)]
@@ -31,7 +32,8 @@ pub enum Method {
     Lzss,
     Huff,
     AHuff,
-    Lzp,
+    Lzp1,
+    Lzp2,
     BinArith,
 }
 
@@ -150,8 +152,11 @@ fn compress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
             Method::AHuff => {
                 huff::adaptive::compress(inf, outf).unwrap()
             },
-            Method::Lzp => {
-                lzp::compress(inf, outf).unwrap()
+            Method::Lzp1 => {
+                lzp1::compress(inf, outf).unwrap()
+            },
+            Method::Lzp2 => {
+                lzp2::compress(inf, outf).unwrap()
             },
             Method::BinArith => {
                 binarith::compress(inf, outf).unwrap()
@@ -196,8 +201,11 @@ fn decompress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
             Method::AHuff => {
                 huff::adaptive::decompress(inf, outf).unwrap()
             },
-            Method::Lzp => {
-                lzp::decompress(inf, outf).unwrap()
+            Method::Lzp1 => {
+                lzp1::decompress(inf, outf).unwrap()
+            },
+            Method::Lzp2 => {
+                lzp2::decompress(inf, outf).unwrap()
             },
             Method::BinArith => {
                 binarith::decompress(inf, outf).unwrap()
@@ -255,7 +263,7 @@ fn do_compare(input: &str) {
         let orig_hash_vec = orig_hash.as_ref().to_vec();
 
     let mut results: Vec<Result> = Vec::new();
-    for method in [Arith, BinArith, WittenArith, Lzw, Lz77, Lzss, Lzp,
+    for method in [Arith, BinArith, WittenArith, Lzw, Lz77, Lzss, Lzp1, Lzp2,
                    Huff, AHuff].iter() {
         let start_compress = Instant::now();
         let (orig_size, compressed_size) =
@@ -347,7 +355,7 @@ pub fn main() {
     opts.optflag("d", "decompress", "decompress the input file");
     opts.optflag("t", "test", "test compressor on a file");
     opts.optflag("p", "compare", "compare all compressors on a file");
-    opts.optopt("m", "method", "select compression method", "arith|warith|lzw|lz77|lzss|lzmg2|huff|ahuff|lzp|binarith");
+    opts.optopt("m", "method", "select compression method", "arith|warith|lzw|lz77|lzss|lzmg2|huff|ahuff|lzp1|lzp2|binarith");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
 
@@ -366,7 +374,8 @@ pub fn main() {
                         "lzss"   => Some(Method::Lzss),
                         "huff"  => Some(Method::Huff),
                         "ahuff"  => Some(Method::AHuff),
-                        "lzp"  => Some(Method::Lzp),
+                        "lzp1"  => Some(Method::Lzp1),
+                        "lzp2"  => Some(Method::Lzp2),
                         "binarith"  => Some(Method::BinArith),
                         _       => None,
                     }

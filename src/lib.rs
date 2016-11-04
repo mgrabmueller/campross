@@ -6,9 +6,10 @@ pub mod bitfile;
 
 pub mod lz77;
 pub mod lzss;
-pub mod arith;
+pub mod lzp1;
+pub mod lzp2;
 pub mod lzw;
 pub mod huff;
-pub mod lzp;
-pub mod binarith;
+pub mod arith;
 pub mod witten_arith;
+pub mod binarith;
