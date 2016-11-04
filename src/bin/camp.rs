@@ -18,6 +18,7 @@ use campross::witten_arith;
 use campross::lzw;
 use campross::lz77;
 use campross::lzss;
+use campross::lzss2;
 use campross::huff;
 use campross::lzp1;
 use campross::lzp2;
@@ -30,6 +31,7 @@ pub enum Method {
     Lzw,
     Lz77,
     Lzss,
+    Lzss2,
     Huff,
     AHuff,
     Lzp1,
@@ -146,6 +148,9 @@ fn compress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
             Method::Lzss => {
                 lzss::compress(inf, outf).unwrap()
             },
+            Method::Lzss2 => {
+                lzss2::compress(inf, outf).unwrap()
+            },
             Method::Huff => {
                 huff::block::compress(inf, outf).unwrap()
             },
@@ -194,6 +199,9 @@ fn decompress_with(input: &str, output: &str, method: Method) -> (u64, u64) {
             },
             Method::Lzss => {
                 lzss::decompress(inf, outf).unwrap()
+            },
+            Method::Lzss2 => {
+                lzss2::decompress(inf, outf).unwrap()
             },
             Method::Huff => {
                 huff::block::decompress(inf, outf).unwrap()
@@ -263,7 +271,9 @@ fn do_compare(input: &str) {
         let orig_hash_vec = orig_hash.as_ref().to_vec();
 
     let mut results: Vec<Result> = Vec::new();
-    for method in [Arith, BinArith, WittenArith, Lzw, Lz77, Lzss, Lzp1, Lzp2,
+    for method in [Arith, BinArith, WittenArith,
+                   Lzw, Lz77, Lzss, Lzss2,
+                   Lzp1, Lzp2,
                    Huff, AHuff].iter() {
         let start_compress = Instant::now();
         let (orig_size, compressed_size) =
@@ -355,7 +365,7 @@ pub fn main() {
     opts.optflag("d", "decompress", "decompress the input file");
     opts.optflag("t", "test", "test compressor on a file");
     opts.optflag("p", "compare", "compare all compressors on a file");
-    opts.optopt("m", "method", "select compression method", "arith|warith|lzw|lz77|lzss|lzmg2|huff|ahuff|lzp1|lzp2|binarith");
+    opts.optopt("m", "method", "select compression method", "arith|warith|lzw|lz77|lzss|lzss2|lzmg2|huff|ahuff|lzp1|lzp2|binarith");
     opts.optflag("s", "stats", "print statistics");
     opts.optflag("h", "help", "print this help");
 
@@ -367,17 +377,18 @@ pub fn main() {
             let method =
                 if let Some(s) = matches.opt_str("m") {
                     match &s[..] {
-                        "arith" => Some(Method::Arith),
+                        "arith"  => Some(Method::Arith),
                         "warith" => Some(Method::WittenArith),
-                        "lzw"   => Some(Method::Lzw),
+                        "lzw"    => Some(Method::Lzw),
                         "lz77"   => Some(Method::Lz77),
                         "lzss"   => Some(Method::Lzss),
-                        "huff"  => Some(Method::Huff),
+                        "lzss2"  => Some(Method::Lzss2),
+                        "huff"   => Some(Method::Huff),
                         "ahuff"  => Some(Method::AHuff),
-                        "lzp1"  => Some(Method::Lzp1),
-                        "lzp2"  => Some(Method::Lzp2),
-                        "binarith"  => Some(Method::BinArith),
-                        _       => None,
+                        "lzp1"   => Some(Method::Lzp1),
+                        "lzp2"   => Some(Method::Lzp2),
+                        "binarith" => Some(Method::BinArith),
+                        _        => None,
                     }
                 } else {
                     Some(Method::Arith)

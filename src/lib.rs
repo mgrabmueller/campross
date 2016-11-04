@@ -6,6 +6,7 @@ pub mod bitfile;
 
 pub mod lz77;
 pub mod lzss;
+pub mod lzss2;
 pub mod lzp1;
 pub mod lzp2;
 pub mod lzw;

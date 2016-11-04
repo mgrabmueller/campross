@@ -6,6 +6,8 @@
 use std::io::{Read, Write, Bytes};
 use std::io;
 
+use huff::adaptive as nested;
+
 use error::Error;
 
 const WINDOW_BITS: usize = 12;
@@ -22,7 +24,7 @@ const HASHTAB_SIZE: usize = 1 << 10;
 
 /// Writer for LZSS compressed streams.
 pub struct Writer<W> {
-    inner:  W,
+    inner:  nested::Writer<W>,
     window: [u8; WINDOW_SIZE],
     hashtab: [usize; HASHTAB_SIZE],
     position: usize,
@@ -43,7 +45,7 @@ impl<W: Write> Writer<W> {
     /// Create a new LZSS writer that wraps the given Writer.
     pub fn new(inner: W) -> Writer<W>{
         Writer {
-            inner:  inner,
+            inner:  nested::Writer::new(inner),
             window: [0; WINDOW_SIZE],
             hashtab: [0; HASHTAB_SIZE],
             position: 0,
@@ -171,7 +173,7 @@ impl<W: Write> Writer<W> {
 
     /// Move the wrapped writer out of the LZSS writer.
     pub fn into_inner(self) -> W {
-        self.inner
+        self.inner.into_inner()
     }
 }
 
@@ -203,7 +205,7 @@ impl<W: Write> Write for Writer<W> {
 
 /// Reader for LZSS compressed streams.
 pub struct Reader<R> {
-    inner: Bytes<R>,
+    inner: Bytes<nested::Reader<R>>,
     window: [u8; WINDOW_SIZE],
     position: usize,
     returned: usize,
@@ -214,7 +216,7 @@ impl<R: Read> Reader<R> {
     /// Create a new LZSS reader that wraps another reader.
     pub fn new(inner: R) -> Reader<R> {
         Reader {
-            inner: inner.bytes(),
+            inner: nested::Reader::new(inner).bytes(),
             window: [0; WINDOW_SIZE],
             position: 0,
             returned: 0,
@@ -358,24 +360,23 @@ mod tests {
 
     #[test]
     fn compress_empty() {
-        cmp_test(b"", &[]);
+        cmp_test(b"", &[0]);
     }
 
     #[test]
     fn compress_a() {
-        cmp_test(b"a", &[128, b'a']);
+        cmp_test(b"a", &[192, 12, 40]);
     }
 
     #[test]
     fn compress_aaa() {
-        cmp_test(b"aaaaaaaaa", &[128, 97, 96, 1]);
+        cmp_test(b"aaaaaaaaa", &[192, 12, 35, 6, 2, 64]);
     }
 
     #[test]
     fn compress_abc() {
         cmp_test(b"abcdefgabcdefgabcabcabcdefg",
-                 &[254, 97, 98, 99, 100, 101, 102, 103, 128,
-                   7, 0, 16, 10, 16, 3, 32, 20]);
+                 &[255, 12, 35, 22, 199, 178, 108, 181, 154, 179, 216, 10, 15, 64, 40, 132, 133, 100, 129, 201, 4, 138, 4]);
     }
 
     fn decmp_test(compressed: &[u8], expected_output: &[u8]) {
@@ -390,24 +391,23 @@ mod tests {
 
     #[test]
     fn decompress_empty() {
-        decmp_test(&[], &[]);
+        decmp_test(&[0], &[]);
     }
 
     #[test]
     fn decompress_a() {
-        decmp_test(&[128, b'a'], b"a");
+        decmp_test(&[192, 12, 40], b"a");
     }
 
     #[test]
     fn decompress_aaa() {
-        decmp_test(&[128, 97, 96, 1], b"aaaaaaaaa");
+        decmp_test(&[192, 12, 35, 6, 2, 64], b"aaaaaaaaa");
     }
 
     #[test]
     fn decompress_abc() {
         decmp_test(
-            &[254, 97, 98, 99, 100, 101, 102, 103, 128,
-              7, 0, 16, 10, 16, 3, 32, 20],
+            &[255, 12, 35, 22, 199, 178, 108, 181, 154, 179, 216, 10, 15, 64, 40, 132, 133, 100, 129, 201, 4, 138, 4],
             b"abcdefgabcdefgabcabcabcdefg");
     }
 
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn compress_decompress() {
-        let input = include_bytes!("lzss.rs");
+        let input = include_bytes!("lzss2.rs");
         roundtrip(input);
     }
 }
